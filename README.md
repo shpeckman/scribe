@@ -189,7 +189,8 @@ The host plugs into a document through these modules. Each is small, and all but
 | `Filter` | `filter(text)` | `SingleLine`, `MultiLine(tab)` |
 | `Clipboard` | `write(text)`, `read { \|text\| }` | `Register` (in memory) |
 | `Layout` | `row_count`, `row_of`, `row_start`, `row_end`, `cell_of`, `offset_in`, `page_rows` | `LineLayout` (one row per line) |
-| `Listener` | `applied`, `edited`, `moved` | no-ops to override |
+| `Listener` | `applied`, `edited`, `moved`, `decorated` | no-ops to override |
+| `TokenSource` | `tokens(buffer, line)` | `HighlightCache` |
 
 **Graphemes.** `boundaries` returns the byte offset where each cluster starts, followed by the string's byte size, so `""` gives `[0]` and `"ab"` gives `[0, 1, 2]`. `kind` returns a `ClusterKind` (`Space`, `Word`, `Punct` or `Other`), which drives word motion and deletion, word selection, smart Home, auto-indent and how typing is grouped for undo. `width` is the display width in columns. Clusters are passed as byte slices into the document's own storage, so a host can classify and measure them without allocating. Give the document the same measurements your renderer uses.
 
@@ -204,6 +205,9 @@ The host plugs into a document through these modules. Each is small, and all but
 - `applied(document, change)` runs for each `Change` as it lands, with the buffer in the state right after it. This is the place to update per-line caches such as wrapping.
 - `edited(document, changes)` runs once per edit or transaction, after the carets are placed, with every change in the order it was applied. Undo reports the changes it applied.
 - `moved(document)` runs whenever the carets change, including after every edit.
+- `decorated(document)` runs when a source replaces its decorations.
+
+**TokenSource.** Anything that can return the highlight tokens of a line — `HighlightCache`, or a syntax tree from another shard (such as `treesitter`) — includes `TokenSource`, so a renderer can take either.
 
 ## Buffer and changes
 
@@ -222,7 +226,30 @@ buffer.find("needle", 10)    # next literal match as a cluster range, wrapping a
 buffer.find_all("needle")
 ```
 
-A `Change` records `from`, the `removed` and `inserted` text, and their sizes in clusters; `removed_lines` and `inserted_lines` count line breaks. When an edit merges with a neighbouring cluster — a combining accent typed after a letter — the change is widened to whole clusters, so undoing it is exact.
+Line byte offsets are kept in a second Fenwick tree, so moving between cluster offsets and UTF-8 byte offsets is logarithmic too. This is what parsers and language servers that count bytes need:
+
+```crystal
+buffer.bytesize              # the text's size in bytes, with \n line breaks
+buffer.byte_offset(42)       # cluster offset → byte offset
+buffer.offset_at_byte(97)    # byte offset → cluster offset (rounded down; ceil: true rounds up)
+buffer.line_byte(3)          # the byte offset where line 3 starts
+buffer.byte_position(97)     # Scribe::Position(line, byte within the line)
+buffer.byte_text(10, 20)     # the text between two byte offsets
+buffer.chunk(97)             # the rest of that line as Bytes, "\n" at a line end, empty at the end
+```
+
+`chunk` reads the text without copying it, one line at a time, for parsers that pull their input.
+
+**Units and points.** Other tools count positions in other units. `Scribe::Units` is `Bytes`, `Utf16`, `CodePoints` or `Clusters`, and a `Point` is a line and a column in one of them:
+
+```crystal
+point = buffer.point(42, Scribe::Units::Utf16)    # Scribe::Point(line, column in UTF-16 code units)
+buffer.offset_at(point, Scribe::Units::Utf16)     # back to a cluster offset (a column inside a cluster rounds down)
+buffer.measure("é👍", Scribe::Units::Utf16)       # => 3
+buffer.line(3).units(Scribe::Units::Bytes, 0, 5)  # the size of columns 0...5 in bytes
+```
+
+A `Change` records `from`, the `removed` and `inserted` text, and their sizes in clusters; `removed_lines` and `inserted_lines` count line breaks. `start_point(buffer, unit)`, `old_end_point` and `new_end_point` describe where it starts and where it ended before and after, as a language server or an incremental parser expects; call them from `Listener#applied`, while the buffer is in the state right after the change. When an edit merges with a neighbouring cluster — a combining accent typed after a letter — the change is widened to whole clusters, so undoing it is exact.
 
 `replace_ranges` applies several `Edit`s (a range and its new text) as one undo step and moves the carets with the text:
 
@@ -231,6 +258,20 @@ text.replace_ranges([Scribe::Edit.new(0...3, "one"), Scribe::Edit.new(10...10, "
 ```
 
 Its text is used as given, without the filter.
+
+## Decorations
+
+A decoration marks a range of the text with a `kind` and a `message`, for example a compiler error. Its edges move with edits like marks do, without growing when text is typed right at them, and a decoration whose range shrinks to nothing remains, empty, until it is replaced.
+
+```crystal
+text.decorate("lsp", [Scribe::Decoration.new(4...9, "error", "undefined method")])
+text.decorations             # every decoration, sorted by start
+text.decorations(0, 20)      # those overlapping 0...20
+text.decorations_at(6)       # those covering offset 6
+text.decorate("lsp", [] of Scribe::Decoration)   # clears that source's decorations
+```
+
+Each call replaces every decoration from the same `source`, so several producers can share a document, and tells listeners through `decorated`.
 
 ## Find and replace
 

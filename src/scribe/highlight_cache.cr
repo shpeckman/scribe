@@ -2,6 +2,7 @@
 module Scribe
   class HighlightCache
     include Listener
+    include TokenSource
 
     NONE = [] of Highlighter::Token
 

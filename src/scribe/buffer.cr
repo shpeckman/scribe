@@ -8,13 +8,16 @@ module Scribe
 
     getter graphemes : Graphemes
     getter size      : Int32
+    getter bytesize  : Int32
     getter revision  : Int32
 
     @lines     : Array(Line)
     @sizes     : Array(Int32)
     @tree      : Array(Int32)
+    @weights   : Array(Int32)
+    @index     : Array(Int32)
+    @bytesize  : Int32
     @text      : String?
-    @bytes     : Array(Int32)?
     @journal   : Deque(Entry)
     @listeners : Array(Proc(Change, Nil))
 
@@ -22,10 +25,12 @@ module Scribe
       @lines     = Buffer.split(text).map { |part| Line.new(part, @graphemes) }
       @sizes     = @lines.map(&.size)
       @tree      = [] of Int32
+      @weights   = @lines.map(&.bytesize)
+      @index     = [] of Int32
       @size      = 0
+      @bytesize  = @weights.sum + @weights.size - 1
       @revision  = 0
       @text      = nil
-      @bytes     = nil
       @journal   = Deque(Entry).new
       @listeners = [] of Proc(Change, Nil)
       @size      = @sizes.sum + @sizes.size - 1
@@ -54,13 +59,11 @@ module Scribe
     end
 
     def line_start(index : Int32) : Int32
-      total = 0
-      node  = index.clamp(0, @lines.size)
-      while node > 0
-        total += @tree.unsafe_fetch(node)
-        node  -= node & -node
-      end
-      total
+      prefix(@tree, index)
+    end
+
+    def line_byte(index : Int32) : Int32
+      prefix(@index, index)
     end
 
     def line_end(index : Int32) : Int32
@@ -68,25 +71,11 @@ module Scribe
     end
 
     def position(offset : Int32) : Position
-      rest  = offset.clamp(0, @size)
-      count = @lines.size
-      node  = 0
-      step  = 1
-      while step <= count
-        step <<= 1
-      end
-      step >>= 1
+      descend(@tree, offset.clamp(0, @size))
+    end
 
-      while step > 0
-        next_node = node + step
-        if next_node <= count && @tree.unsafe_fetch(next_node) <= rest
-          node  = next_node
-          rest -= @tree.unsafe_fetch(next_node)
-        end
-        step >>= 1
-      end
-
-      Position.new(node, rest)
+    def byte_position(byte : Int32) : Position
+      descend(@index, byte.clamp(0, @bytesize))
     end
 
     def offset(line : Int32, column : Int32) : Int32
@@ -96,6 +85,25 @@ module Scribe
 
     def offset(position : Position) : Int32
       offset(position.line, position.column)
+    end
+
+    def point(offset : Int32, unit : Units) : Point
+      found = position(offset)
+      Point.new(found.line, @lines[found.line].units(unit, 0, found.column))
+    end
+
+    def offset_at(point : Point, unit : Units) : Int32
+      line = point.line.clamp(0, @lines.size - 1)
+      line_start(line) + @lines[line].column_for(point.column, unit)
+    end
+
+    def measure(text : String, unit : Units) : Int32
+      case unit
+      in .clusters?    then text.empty? ? 0 : @graphemes.boundaries(text).size - 1
+      in .bytes?       then text.bytesize
+      in .code_points? then text.size
+      in .utf16?       then text.each_char.sum { |char| unit.width(char) }
+      end
     end
 
     def cluster(offset : Int32) : String?
@@ -161,15 +169,41 @@ module Scribe
 
     def byte_offset(offset : Int32) : Int32
       found = position(offset)
-      bytes[found.line] + @lines[found.line].byte_at(found.column)
+      line_byte(found.line) + @lines[found.line].byte_at(found.column)
     end
 
     def offset_at_byte(byte : Int32, ceil : Bool = false) : Int32
-      marks = bytes
-      line  = Math.max((marks.bsearch_index { |mark| mark > byte } || marks.size) - 1, 0)
-      row   = @lines[line]
-      local = (byte - marks[line]).clamp(0, row.bytesize)
-      line_start(line) + row.column_at(local, ceil)
+      found = byte_position(byte)
+      row   = @lines[found.line]
+      line_start(found.line) + row.column_at(found.column.clamp(0, row.bytesize), ceil)
+    end
+
+    def byte_text(from : Int32, to : Int32) : String
+      from = from.clamp(0, @bytesize)
+      to   = to.clamp(from, @bytesize)
+      return "" if from == to
+
+      head = byte_position(from)
+      tail = byte_position(to)
+      return @lines[head.line].text.byte_slice(head.column, tail.column - head.column) if head.line == tail.line
+
+      String.build do |io|
+        first = @lines[head.line].text
+        io.write(first.to_slice[head.column, first.bytesize - head.column])
+        (head.line + 1...tail.line).each { |index| io << BREAK << @lines[index].text }
+        io << BREAK
+        io.write(@lines[tail.line].text.to_slice[0, tail.column])
+      end
+    end
+
+    def chunk(byte : Int32) : Bytes
+      return Bytes.empty unless 0 <= byte < @bytesize
+
+      found = byte_position(byte)
+      row   = @lines[found.line]
+      return BREAK.to_slice if found.column >= row.bytesize
+
+      row.text.to_slice[found.column, row.bytesize - found.column]
     end
 
     def find(needle : String, from : Int32 = 0) : Range(Int32, Int32)?
@@ -221,11 +255,12 @@ module Scribe
       start     = line_start(head.line) + lead
       removed   = slice_text(start...(start + old_total - lead - trail))
 
+      old_bytes = (head.line..tail.line).sum { |index| @weights[index] } + (tail.line - head.line)
       replace_lines(head.line, tail.line, fresh)
       @size     += new_total - old_total
+      @bytesize += fresh.sum(&.bytesize) + (fresh.size - 1) - old_bytes
       @revision += 1
       @text      = nil
-      @bytes     = nil
       @journal << Entry.new(@revision, head.line, tail.line - head.line, fresh.size - 1)
       @journal.shift if @journal.size > JOURNAL
 
@@ -277,51 +312,78 @@ module Scribe
     private def replace_lines(first : Int32, last : Int32, fresh : Array(Line)) : Nil
       if fresh.size == last - first + 1
         fresh.each_with_index do |line, index|
-          delta = line.size - @sizes[first + index]
-          @lines[first + index] = line
-          @sizes[first + index] = line.size
-          adjust(first + index, delta) unless delta == 0
+          at    = first + index
+          delta = line.size - @sizes[at]
+          bytes = line.bytesize - @weights[at]
+          @lines[at]   = line
+          @sizes[at]   = line.size
+          @weights[at] = line.bytesize
+          adjust(@tree, at, delta) unless delta == 0
+          adjust(@index, at, bytes) unless bytes == 0
         end
       else
-        @lines[first..last] = fresh
-        @sizes[first..last] = fresh.map(&.size)
+        @lines[first..last]   = fresh
+        @sizes[first..last]   = fresh.map(&.size)
+        @weights[first..last] = fresh.map(&.bytesize)
         rebuild
       end
     end
 
-    private def adjust(index : Int32, delta : Int32) : Nil
+    private def prefix(tree : Array(Int32), index : Int32) : Int32
+      total = 0
+      node  = index.clamp(0, @lines.size)
+      while node > 0
+        total += tree.unsafe_fetch(node)
+        node  -= node & -node
+      end
+      total
+    end
+
+    private def descend(tree : Array(Int32), rest : Int32) : Position
+      count = @lines.size
+      node  = 0
+      step  = 1
+      while step <= count
+        step <<= 1
+      end
+      step >>= 1
+
+      while step > 0
+        next_node = node + step
+        if next_node <= count && tree.unsafe_fetch(next_node) <= rest
+          node  = next_node
+          rest -= tree.unsafe_fetch(next_node)
+        end
+        step >>= 1
+      end
+
+      Position.new(node, rest)
+    end
+
+    private def adjust(tree : Array(Int32), index : Int32, delta : Int32) : Nil
       count = @lines.size
       node  = index + 1
       while node <= count
-        @tree[node] += delta
+        tree[node] += delta
         node += node & -node
       end
     end
 
     private def rebuild : Nil
-      count = @lines.size
-      tree  = @tree
+      fill(@tree, @sizes)
+      fill(@index, @weights)
+    end
+
+    private def fill(tree : Array(Int32), sizes : Array(Int32)) : Nil
+      count = sizes.size
       tree.pop(tree.size - count - 1) if tree.size > count + 1
       tree.fill(0)
       (count + 1 - tree.size).times { tree << 0 }
-      @sizes.each_with_index do |size, index|
+      sizes.each_with_index do |size, index|
         node   = index + 1
         tree[node] += size + 1
         parent = node + (node & -node)
         tree[parent] += tree[node] if parent <= count
-      end
-      @tree = tree
-    end
-
-    private def bytes : Array(Int32)
-      @bytes ||= begin
-        marks = Array(Int32).new(@lines.size)
-        total = 0
-        @lines.each do |line|
-          marks << total
-          total += line.bytesize + 1
-        end
-        marks
       end
     end
   end

@@ -9,5 +9,8 @@ module Scribe
 
     def moved(document : Document) : Nil
     end
+
+    def decorated(document : Document) : Nil
+    end
   end
 end
