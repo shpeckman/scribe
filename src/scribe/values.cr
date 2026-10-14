@@ -58,4 +58,6 @@ module Scribe
       text.gsub("\r\n", "\n").tr("\r", "\n")
     end
   end
+
+  record Stroke, range : Range(Int32, Int32), text : String, anchor : Int32? = nil, head : Int32? = nil
 end

@@ -1,9 +1,9 @@
-# src/scribe/document/lines.cr
+# src/scribe/view/lines.cr
 module Scribe
-  class Document
+  class View
     private def indent_lines : Bool
       edits = blocks.flat_map do |(first, last)|
-        (first..last).map { |line| Edit.new(@buffer.line_start(line)...@buffer.line_start(line), @indent) }
+        (first..last).map { |line| Edit.new(@buffer.line_start(line)...@buffer.line_start(line), @document.indent) }
       end
       replace_ranges(edits)
     end
@@ -21,10 +21,10 @@ module Scribe
     end
 
     private def outdent_size(line : Line) : Int32
-      return count(@indent) if !@indent.empty? && line.starts_with?(@indent)
+      return count(@document.indent) if !@document.indent.empty? && line.starts_with?(@document.indent)
       return 1 if !line.empty? && line.char(0) == '\t'
 
-      limit = @indent.includes?('\t') ? @tab_size : count(@indent)
+      limit = @document.indent.includes?('\t') ? @document.tab_size : count(@document.indent)
       size  = 0
       while size < limit && size < line.size && line.char(size) == ' '
         size += 1
@@ -33,7 +33,7 @@ module Scribe
     end
 
     private def toggle_comment : Bool
-      prefix  = @comment || return false
+      prefix  = @document.comment || return false
       lines   = blocks.flat_map { |(first, last)| (first..last).to_a }
       targets = lines.reject { |line| blank?(@buffer.line(line)) }
       return false if targets.empty?

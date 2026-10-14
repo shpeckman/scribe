@@ -60,3 +60,36 @@ describe Scribe::Decoration do
     events.moves.should be > 0
   end
 end
+
+describe "cluster marks" do
+  it "stores no boundary table for an ASCII line and maps columns to bytes directly" do
+    row = line("def run(x)")
+    row.ascii?.should be_true
+    row.size.should eq(10)
+    row.byte_at(4).should eq(4)
+    row.column_at(4).should eq(4)
+    row.boundary(7).should eq(7)
+    row.cluster(0).should eq("d")
+    row.slice(4, 7).should eq("run")
+    row.units(Scribe::Units::Utf16, 0, 10).should eq(10)
+    row.column_for(4, Scribe::Units::Utf16).should eq(4)
+  end
+
+  it "keeps a boundary table once a line needs one" do
+    row = line("héllo 👍")
+    row.ascii?.should be_false
+    row.size.should eq(7)
+    row.byte_at(1).should eq(1)
+    row.byte_at(2).should eq(3)
+    row.cluster(6).should eq("👍")
+    row.units(Scribe::Units::Utf16, 0, 7).should eq(8)
+  end
+
+  it "agrees on both paths for the same columns" do
+    plain = line("abcdef")
+    mixed = line("abcdéf")
+    (0..6).each { |column| plain.byte_at(column).should eq(column) }
+    (0..4).each { |column| mixed.byte_at(column).should eq(column) }
+    mixed.byte_at(5).should eq(6)
+  end
+end

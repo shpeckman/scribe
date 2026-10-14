@@ -2,7 +2,7 @@
 
 A multi-caret text editing model for Crystal.
 
-scribe holds the text, the carets and the undo history, and carries out editing commands: typing, deleting, word and line motion, multiple carets, box selection, clipboard, line operations, comments, auto-closing brackets, and find and replace. It draws nothing, reads no input and highlights nothing: syntax tokens come from a host-supplied `TokenSource`, such as the one in [treesitter](https://github.com/shpeckman/treesitter.cr). The host — a terminal UI, a GUI, a test — implements a few small interfaces, sends commands, and listens for changes.
+scribe holds the text, the carets and the undo history, and carries out editing commands: typing, deleting, word and subword motion, multiple carets, box selection, clipboard, line operations and transforms, comments, auto-closing brackets, snippets with tabstops, folding, and find and replace. One document can carry several views, each with its own carets and layout. It draws nothing, reads no input and highlights nothing: syntax tokens come from a host-supplied `TokenSource`, such as the one in [treesitter](https://github.com/shpeckman/treesitter.cr). The host — a terminal UI, a GUI, a test — implements a few small interfaces, sends commands, and listens for changes.
 
 It has no dependencies beyond the standard library.
 
@@ -63,9 +63,22 @@ text.undo
 text.value # => "hello world"
 ```
 
-## The document
+## Documents and views
 
-`Scribe::Document` owns a `Buffer`, the carets and a `History`. Offsets everywhere count grapheme clusters, not bytes or characters; a line break counts as one cluster.
+A `Document` owns the text, the undo `History`, the marks, the decorations and the annotations. A `View` owns the carets, the goal column, the box selection and the `Layout`, and carries out every command. A document has one view from the start, and `Document` delegates the whole caret and editing API to it, so a single-view host never mentions `View` at all.
+
+```crystal
+text  = Scribe::Document.new(graphemes, "one two", filter: Scribe::MultiLine.new)
+text.insert("x")             # goes to text.view
+other = Scribe::View.new(text)
+other.select_range(0, 3)     # its own carets, its own layout
+text.views.size              # => 2
+other.close                  # stops following the document
+```
+
+Two views share the text and the history: an edit from either one shows in both, the other's carets are carried through it as marks are, and `undo` from either one seats the carets it recorded. `view.layout = …` is per view, so two panes can wrap the same document at different widths.
+
+Offsets everywhere count grapheme clusters, not bytes or characters; a line break counts as one cluster.
 
 ```crystal
 text = Scribe::Document.new(graphemes, "one two", max_length: 80, copy_on_select: true)
@@ -97,6 +110,7 @@ text.redo
 | `copyable` | `true` | `false` disables copy and cut, for example for a masked password |
 | `copy_on_select` | `false` | Copy a selection as soon as it is made |
 | `read_only` | `false` | Refuse edits from commands, `insert`, `paste`, `replace_match` and `replace_all`; motion, selection and copy still work, and `value=` and `replace_ranges` from code still apply |
+| `final_newline` | `false` | `export` ends the text with one line ending |
 
 Every option except `max_length` is also a property; `max_length=` truncates the text when it shrinks. `dragging=` tells the document a pointer drag is in progress, which holds back `copy_on_select` until the host calls `auto_copy` on release.
 
@@ -147,13 +161,14 @@ Text inserted exactly at a mark goes after a `Left` mark and before a `Right` ma
 
 | Group | Commands |
 | --- | --- |
-| Motion | `Left`, `Right`, `WordLeft`, `WordRight`, `RowStart`, `SmartRowStart`, `RowEnd`, `Up`, `Down`, `PageUp`, `PageDown`, `DocumentStart`, `DocumentEnd` |
+| Motion | `Left`, `Right`, `WordLeft`, `WordRight`, `SubwordLeft`, `SubwordRight`, `RowStart`, `SmartRowStart`, `RowEnd`, `Up`, `Down`, `PageUp`, `PageDown`, `DocumentStart`, `DocumentEnd` |
 | Selection | `SelectAll`, `SelectWord`, `SelectLine`, `Collapse` |
-| Carets | `AddNextOccurrence`, `SkipOccurrence`, `SelectAllOccurrences`, `AddCaretAbove`, `AddCaretBelow`, `RemoveLastCaret` |
+| Carets | `AddNextOccurrence`, `SkipOccurrence`, `SelectAllOccurrences`, `AddCaretAbove`, `AddCaretBelow`, `AddCaretPerLine`, `RemoveLastCaret` |
 | Box | `BoxUp`, `BoxDown`, `BoxLeft`, `BoxRight` |
-| Deleting | `DeleteBackward`, `DeleteForward`, `DeleteWordBackward`, `DeleteWordForward`, `DeleteToRowStart`, `DeleteToRowEnd` |
+| Deleting | `DeleteBackward`, `DeleteForward`, `DeleteWordBackward`, `DeleteWordForward`, `DeleteSubwordBackward`, `DeleteSubwordForward`, `DeleteToRowStart`, `DeleteToRowEnd` |
 | Editing | `NewLine`, `Tab`, `Indent`, `Outdent`, `ToggleComment` |
-| Lines | `MoveLinesUp`, `MoveLinesDown`, `DuplicateLines`, `DeleteLines` |
+| Lines | `MoveLinesUp`, `MoveLinesDown`, `DuplicateLines`, `DeleteLines`, `SortLines`, `ReverseLines`, `UniqueLines`, `JoinLines`, `TrimTrailingWhitespace` |
+| Case | `UpperCase`, `LowerCase`, `TitleCase` |
 | Clipboard | `Copy`, `Cut`, `Paste` |
 | History | `Undo`, `Redo` |
 
@@ -171,6 +186,10 @@ Notes on individual commands:
 - `ToggleComment` comments every non-blank line under the carets at their shallowest indentation, or uncomments them when all are commented. It needs the `comment` option.
 - `MoveLines*`, `Indent`, `Outdent`, `ToggleComment`, `DuplicateLines` and `DeleteLines` act once per block of lines under the carets.
 - `AddNextOccurrence` first selects the word under an empty caret. `SkipOccurrence` moves the most recent caret on to the next occurrence. `SelectAllOccurrences` puts a caret on every occurrence of the selection, or of the word under the caret.
+- `SubwordLeft` and `SubwordRight` stop at camelCase humps, underscores and the start of a word, so `fooBar_baz` has four stops.
+- `SortLines`, `ReverseLines`, `UniqueLines` and `TrimTrailingWhitespace` act on the whole block of lines under the carets and return `false` when nothing changed. `JoinLines` joins the block, or the next line when a caret is empty.
+- `UpperCase`, `LowerCase` and `TitleCase` transform each selection and keep it selected; without a selection they do nothing.
+- `AddCaretPerLine` puts a caret at the end of every line a selection spans.
 - `Box*` grows a rectangular selection from the primary caret. `start_box(row, column)`, `select_box(anchor_row, anchor_column, head_row, head_column)` and `clear_box` let a host drive it from a pointer; `box` returns the current corners.
 
 Typing is not a command: send `insert(text)`. Pressing Enter in a single-line field is not a command either; the host decides what it means.
@@ -205,8 +224,8 @@ The host plugs into a document through these modules. Each is small, and all but
 
 - `applied(document, change)` runs for each `Change` as it lands, with the buffer in the state right after it. This is the place to update per-line caches such as wrapping.
 - `edited(document, changes)` runs once per edit or transaction, after the carets are placed, with every change in the order it was applied. Undo reports the changes it applied.
-- `moved(document)` runs whenever the carets change, including after every edit.
-- `decorated(document)` runs when a source replaces its decorations.
+- `moved(view)` runs whenever that view's carets change, including after every edit. The view it is given carries `view.document`.
+- `decorated(document)` runs when a source replaces its decorations, and `annotated(document)` when a source replaces its annotations.
 
 **TokenSource.** Anything that can return the tokens of a line in a buffer includes `TokenSource`, so a renderer takes a source without knowing what produced it. `TreeSitter::Syntax` is one. A `Token` is a `start`, a `count` and a `kind`, with columns counting clusters, and `TokenSource::NO_TOKENS` is the shared empty result.
 
@@ -214,7 +233,7 @@ The host plugs into a document through these modules. Each is small, and all but
 
 ## Buffer and changes
 
-`document.buffer` stores each line as one UTF-8 string with its cluster boundaries, and keeps line offsets in a Fenwick tree, so finding a line, its start, or the line of an offset takes logarithmic time.
+`document.buffer` stores each line as one UTF-8 string with its cluster boundaries, and keeps line offsets in a Fenwick tree, so finding a line, its start, or the line of an offset takes logarithmic time. A line whose bytes are all ASCII keeps no boundary table at all — its columns are its byte offsets — so ordinary source code costs nothing per cluster; `line.ascii?` says which kind a line is. Searching is line by line and never builds the whole text.
 
 ```crystal
 buffer = text.buffer
@@ -222,11 +241,13 @@ buffer.line_count
 buffer.position(42)          # Scribe::Position(line, column)
 buffer.offset(position)
 buffer.line_start(3)
-buffer.line(3)               # Scribe::Line: text, size, cluster(column), bytes(column), slice(from, to), each_cluster
+buffer.line(3)               # Scribe::Line: text, size, ascii?, cluster(column), bytes(column), boundary(column), slice(from, to), each_cluster
 buffer.width(3, 0, 10)       # display width of columns 0...10 on line 3
 buffer.index(3, 12)          # the column under display column 12 on line 3
 buffer.find("needle", 10)    # next literal match as a cluster range, wrapping around
 buffer.find_all("needle")
+buffer.revision              # how many edits the buffer has seen
+buffer.changes_since(7)      # the Changes since a revision, or nil when the journal does not reach back
 ```
 
 Line byte offsets are kept in a second Fenwick tree, so moving between cluster offsets and UTF-8 byte offsets is logarithmic too. This is what parsers and language servers that count bytes need:
@@ -276,6 +297,80 @@ text.decorate("lsp", [] of Scribe::Decoration)   # clears that source's decorati
 
 Each call replaces every decoration from the same `source`, so several producers can share a document, and tells listeners through `decorated`.
 
+## Annotations
+
+An annotation is text shown beside the document rather than in it — an inlay hint, a git blame, a line note. Its offset follows edits like a mark, and each source replaces its own set, as decorations do.
+
+```crystal
+text.annotate("lsp", [Scribe::Annotation.new(7, ": Int32", Scribe::Placement::After, "type")])
+text.annotations                 # every annotation, sorted by offset
+text.annotations(0, 20)          # those between two offsets
+text.annotations_at(7)
+text.annotations_on(3)           # those on line 3
+text.annotate("lsp", [] of Scribe::Annotation)   # clears that source
+```
+
+`Placement` is `Before`, `After` or `RowEnd`, and decides which side of the offset the host draws the text on; a `Before` annotation keeps its place when text is typed at it, the others move with it. Listeners hear `annotated`.
+
+## Folding
+
+Folds belong to a view, so two panes can fold a document differently. A fold is a line range held by marks, so it follows edits.
+
+```crystal
+folds = text.view.folds
+folds.fold(2, 8)             # collapsed by default; nil for an empty or out-of-range range
+folds.collapsed?(2)          # the header line
+folds.hidden?(5)             # a line inside a collapsed fold
+folds.toggle(2)
+folds.expand(2)
+folds.unfold(2)
+folds.rows                   # the visible lines, in order
+folds.replace([{0, 4}, {6, 9}])   # every fold at once, as a query would supply them
+folds.clear
+```
+
+`LineLayout` consults the view's folds, so `row_count`, vertical motion, paging, smart Home and carets above and below all skip hidden lines. A host with its own `Layout` reads `folds.hidden?` itself. `view.folds` creates the set on first use and `view.folds?` tells whether one exists.
+
+## Snippets
+
+A snippet is text with tabstops. `Snippet.parse` turns LSP snippet syntax into plain text plus stop spans, and `View#insert_snippet` inserts it and selects the first stop.
+
+```crystal
+snippet = text.view.insert_snippet("def ${1:name}($2)\n  $0\nend")
+text.selected_text          # => "name"
+text.insert("run")          # fills the stop
+snippet.next_stop(text.view)
+snippet.previous_stop(text.view)
+snippet.active?
+snippet.close               # drops its marks
+```
+
+- `$1`, `${1}`, `${1:placeholder}`, `$0` (the final stop), `${1|one,two|}` (the first option) and `\$` are understood. A `${VAR:default}` resolves to its default and an unknown `$VAR` to nothing.
+- A stop that appears more than once becomes one caret per occurrence, so typing fills every mirror at once.
+- The stops are held by marks, so filling an early stop carries the later ones.
+- Inserting a snippet replaces the primary caret's selection as one undo step. A snippet with no stops is inserted and `nil` comes back.
+
+## Diffing
+
+`Scribe.diff` turns an old and a new text into the smallest set of line edits, for `replace_ranges`:
+
+```crystal
+text.replace_ranges(Scribe.diff(text.value, formatted, graphemes))
+```
+
+The carets, marks, decorations and annotations outside the changed lines stay where they are, which is what `value=` cannot do. It is a Myers line diff with common ends trimmed; past `limit` lines of difference it falls back to one edit covering the changed region.
+
+## Revisions
+
+`Buffer#revision` counts edits, and the buffer keeps the last 256 of them. `Document#map` carries an offset or a range from an older revision to the current one, for a result that arrives late:
+
+```crystal
+mark = text.revision
+# … a language server answers three keystrokes later …
+text.map(offset, mark)        # => the offset now, or nil if the journal no longer reaches back
+text.map(range, mark)         # a range, which does not grow at its edges
+```
+
 ## Find and replace
 
 `Search` finds matches in a buffer, case-insensitively by default, with optional whole-word and regular-expression modes. Matches are cluster ranges, cached until the buffer changes. A literal search keeps its matches per line and, after an edit, rescans only the lines the edit touched; a regular expression can span lines, so it rescans the whole text.
@@ -323,6 +418,25 @@ past.push("ls")
 past.back("dra")   # => "ls"
 past.forward       # => "dra"
 ```
+
+## Macros
+
+`MacroLog` records the commands and the text a view receives, and replays them:
+
+```crystal
+log = Scribe::MacroLog.new
+text.view.macros = log
+
+log.record
+text.run(Scribe::Command::RowEnd)
+text.insert(";")
+log.stop
+
+log.replay(text.view)            # once, as one undo step
+log.replay(text.view, 10)        # ten more times
+```
+
+A replay records nothing itself, and each pass is one undo step.
 
 ## Development
 

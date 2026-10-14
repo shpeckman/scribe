@@ -58,6 +58,7 @@ class Recorder
   getter applied = [] of Scribe::Change
   getter edited  = [] of Array(Scribe::Change)
   getter moves   = 0
+  getter last_view : Scribe::View? = nil
 
   def applied(document : Scribe::Document, change : Scribe::Change) : Nil
     @applied << change
@@ -67,8 +68,9 @@ class Recorder
     @edited << changes
   end
 
-  def moved(document : Scribe::Document) : Nil
+  def moved(view : Scribe::View) : Nil
     @moves += 1
+    @last_view = view
   end
 end
 
@@ -100,4 +102,14 @@ end
 
 def change(from : Int32, removed : String, inserted : String) : Scribe::Change
   Scribe::Change.new(from, removed, inserted, GRAPHEMES.boundaries(removed).size - 1, GRAPHEMES.boundaries(inserted).size - 1)
+end
+
+class Noticed
+  include Scribe::Listener
+
+  getter annotations = 0
+
+  def annotated(document : Scribe::Document) : Nil
+    @annotations += 1
+  end
 end

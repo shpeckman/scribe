@@ -5,6 +5,8 @@ module Scribe
     Right
     WordLeft
     WordRight
+    SubwordLeft
+    SubwordRight
     RowStart
     SmartRowStart
     RowEnd
@@ -23,6 +25,7 @@ module Scribe
     SelectAllOccurrences
     AddCaretAbove
     AddCaretBelow
+    AddCaretPerLine
     RemoveLastCaret
     BoxUp
     BoxDown
@@ -32,6 +35,8 @@ module Scribe
     DeleteForward
     DeleteWordBackward
     DeleteWordForward
+    DeleteSubwordBackward
+    DeleteSubwordForward
     DeleteToRowStart
     DeleteToRowEnd
     NewLine
@@ -43,6 +48,14 @@ module Scribe
     MoveLinesDown
     DuplicateLines
     DeleteLines
+    SortLines
+    ReverseLines
+    UniqueLines
+    JoinLines
+    TrimTrailingWhitespace
+    UpperCase
+    LowerCase
+    TitleCase
     Copy
     Cut
     Paste
@@ -50,9 +63,10 @@ module Scribe
     Redo
 
     def edits? : Bool
-      in?(DeleteBackward, DeleteForward, DeleteWordBackward, DeleteWordForward, DeleteToRowStart, DeleteToRowEnd,
-        NewLine, Tab, Indent, Outdent, ToggleComment, MoveLinesUp, MoveLinesDown, DuplicateLines, DeleteLines,
-        Cut, Paste, Undo, Redo)
+      in?(DeleteBackward, DeleteForward, DeleteWordBackward, DeleteWordForward, DeleteSubwordBackward,
+        DeleteSubwordForward, DeleteToRowStart, DeleteToRowEnd, NewLine, Tab, Indent, Outdent, ToggleComment,
+        MoveLinesUp, MoveLinesDown, DuplicateLines, DeleteLines, SortLines, ReverseLines, UniqueLines,
+        JoinLines, TrimTrailingWhitespace, UpperCase, LowerCase, TitleCase, Cut, Paste, Undo, Redo)
     end
   end
 end

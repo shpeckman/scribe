@@ -1,38 +1,51 @@
-# src/scribe/document/editing.cr
+# src/scribe/view/editing.cr
 module Scribe
-  class Document
+  class View
     PAIRS   = {"(" => ")", "[" => "]", "{" => "}", "\"" => "\"", "'" => "'"}
     CLOSING = {")", "]", "}", "\"", "'"}
 
     def insert(text : String) : Bool
-      prepared = prepare(text)
-      if @auto_close && (PAIRS.has_key?(prepared) || CLOSING.includes?(prepared))
+      @macros.try(&.push(text))
+      prepared = @document.prepare(text)
+      if @document.auto_close? && (PAIRS.has_key?(prepared) || CLOSING.includes?(prepared))
         return pair(prepared)
       end
 
       put(prepared)
     end
 
+    def insert_snippet(source : String) : Snippet?
+      template = Snippet.parse(@document.prepare(source), @graphemes)
+      start    = primary_caret.start
+      return nil unless replace_ranges([Edit.new(primary_caret.range, template.text)],
+                          History::Kind::Other, [Caret.at(start + count(template.text))])
+      return nil if template.spans.empty?
+
+      snippet = Snippet.new(@document, start, template)
+      snippet.next_stop(self)
+      snippet
+    end
+
     def paste(text : String) : Bool
       normal = LineEnding.normalize(text)
       parts  = normal.chomp.split('\n')
-      return put(@filter.filter(normal)) unless multiple? && parts.size == @carets.size
+      return put(@document.filter.filter(normal)) unless multiple? && parts.size == @carets.size
 
-      pieces = parts.map { |part| @filter.filter(part) }
-      apply(History::Kind::Other) { |caret, index| Stroke.new(caret.range, pieces[index]) }
+      pieces = parts.map { |part| @document.filter.filter(part) }
+      @document.apply(self, History::Kind::Other) { |caret, index| Stroke.new(caret.range, pieces[index]) }
     end
 
     private def put(prepared : String) : Bool
       return false if prepared.empty?
 
       kind = count(prepared) == 1 && prepared != Buffer::BREAK ? History::Kind::Typing : History::Kind::Other
-      apply(kind) { |caret, _index| Stroke.new(caret.range, prepared) }
+      @document.apply(self, kind) { |caret, _index| Stroke.new(caret.range, prepared) }
     end
 
     private def pair(char : String) : Bool
       closer = PAIRS[char]?
 
-      apply(History::Kind::Typing) do |caret, _index|
+      @document.apply(self, History::Kind::Typing) do |caret, _index|
         if caret.empty? && CLOSING.includes?(char) && @buffer.cluster(caret.head) == char
           Stroke.new(caret.head...(caret.head + 1), char)
         elsif closer.nil?
@@ -48,20 +61,20 @@ module Scribe
     end
 
     private def delete_backward : Nil
-      apply(History::Kind::Deleting) do |caret, _index|
+      @document.apply(self, History::Kind::Deleting) do |caret, _index|
         head = caret.head
         if !caret.empty?
           Stroke.new(caret.range, "")
         elsif head > 0
           before = @buffer.cluster(head - 1)
-          paired = @auto_close && before && PAIRS[before]? == @buffer.cluster(head)
+          paired = @document.auto_close? && before && PAIRS[before]? == @buffer.cluster(head)
           Stroke.new((head - 1)...(paired ? head + 1 : head), "")
         end
       end
     end
 
     private def delete_forward : Nil
-      apply(History::Kind::Deleting) do |caret, _index|
+      @document.apply(self, History::Kind::Deleting) do |caret, _index|
         if !caret.empty?
           Stroke.new(caret.range, "")
         elsif caret.head < length
@@ -70,8 +83,19 @@ module Scribe
       end
     end
 
+    private def delete_subword(direction : Int32) : Nil
+      @document.apply(self, History::Kind::Deleting) do |caret, _index|
+        if !caret.empty?
+          Stroke.new(caret.range, "")
+        else
+          edge = subword_edge(caret.head, direction)
+          edge == caret.head ? nil : Stroke.new(Math.min(edge, caret.head)...Math.max(edge, caret.head), "")
+        end
+      end
+    end
+
     private def delete_word(direction : Int32) : Nil
-      apply(History::Kind::Deleting) do |caret, _index|
+      @document.apply(self, History::Kind::Deleting) do |caret, _index|
         if !caret.empty?
           Stroke.new(caret.range, "")
         else
@@ -82,7 +106,7 @@ module Scribe
     end
 
     private def delete_to_row(start : Bool) : Nil
-      apply(History::Kind::Deleting) do |caret, _index|
+      @document.apply(self, History::Kind::Deleting) do |caret, _index|
         if !caret.empty?
           Stroke.new(caret.range, "")
         else
@@ -94,8 +118,8 @@ module Scribe
     end
 
     private def new_line : Bool
-      apply(History::Kind::Other) do |caret, _index|
-        if @auto_indent
+      @document.apply(self, History::Kind::Other) do |caret, _index|
+        if @document.auto_indent?
           found = @buffer.position(caret.start)
           line  = @buffer.line(found.line)
           lead  = 0
@@ -113,7 +137,7 @@ module Scribe
       if @carets.any? { |caret| @buffer.position(caret.start).line != @buffer.position(caret.stop).line }
         indent_lines
       else
-        insert(@indent)
+        insert(@document.indent)
       end
     end
   end

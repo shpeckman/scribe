@@ -1,6 +1,6 @@
-# src/scribe/document/finder.cr
+# src/scribe/view/finder.cr
 module Scribe
-  class Document
+  class View
     OPENERS = {"(" => ")", "[" => "]", "{" => "}"}
     CLOSERS = {")" => "(", "]" => "[", "}" => "{"}
     REACH   = 20_000
@@ -14,20 +14,20 @@ module Scribe
     end
 
     def replace_match(search : Search, match : Range(Int32, Int32), template : String) : Bool
-      return false if @read_only
+      return false if @document.read_only?
       return false unless match == selection && search.index(@buffer, match)
 
-      replace_ranges([Edit.new(match, prepare(search.expand(@buffer, match, template)))])
+      replace_ranges([Edit.new(match, @document.prepare(search.expand(@buffer, match, template)))])
       true
     end
 
     def replace_all(search : Search, template : String) : Int32
-      return 0 if @read_only
+      return 0 if @document.read_only?
 
       found = search.matches(@buffer)
       return 0 if found.empty?
 
-      replace_ranges(found.map { |range| Edit.new(range, prepare(search.expand(@buffer, range, template))) })
+      replace_ranges(found.map { |range| Edit.new(range, @document.prepare(search.expand(@buffer, range, template))) })
       found.size
     end
 

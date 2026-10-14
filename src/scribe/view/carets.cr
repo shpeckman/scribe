@@ -1,6 +1,6 @@
-# src/scribe/document/carets.cr
+# src/scribe/view/carets.cr
 module Scribe
-  class Document
+  class View
     def move(index : Int32, selecting : Bool = false) : Nil
       anchor = selecting ? primary_caret.anchor : index
       seat([Caret.new(anchor, index)], 0)
