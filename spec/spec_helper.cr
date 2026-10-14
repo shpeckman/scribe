@@ -1,0 +1,89 @@
+# spec/spec_helper.cr
+require "spec"
+require "../src/scribe"
+
+struct Plain
+  include Scribe::Graphemes
+
+  WIDE = [0x1100..0x115F, 0x2E80..0xA4CF, 0xAC00..0xD7A3, 0xF900..0xFAFF, 0xFF00..0xFF60, 0x1F300..0x1FAFF]
+
+  def clusters(text : String) : Array(String)
+    text.graphemes.map(&.to_s)
+  end
+
+  def kind(cluster : String) : Scribe::ClusterKind
+    char = cluster[0]? || return Scribe::ClusterKind::Other
+    return Scribe::ClusterKind::Space if char.whitespace?
+    return Scribe::ClusterKind::Word if char.alphanumeric? || char == '_'
+    return Scribe::ClusterKind::Other if char.control?
+
+    Scribe::ClusterKind::Punct
+  end
+
+  def width(cluster : String) : Int32
+    code = cluster[0]?.try(&.ord) || return 0
+    WIDE.any?(&.includes?(code)) ? 2 : 1
+  end
+end
+
+class Deferred
+  include Scribe::Clipboard
+
+  getter text    : String
+  getter pending : Array(Proc(String?, Nil))
+
+  def initialize(@text : String = "")
+    @pending = [] of Proc(String?, Nil)
+  end
+
+  def write(text : String) : Nil
+    @text = text
+  end
+
+  def read(&block : String? -> Nil) : Nil
+    @pending << block
+  end
+
+  def deliver : Nil
+    @pending.each(&.call(@text))
+    @pending.clear
+  end
+end
+
+class Recorder
+  include Scribe::Listener
+
+  getter applied = [] of Scribe::Change
+  getter edited  = [] of Array(Scribe::Change)
+  getter moves   = 0
+
+  def applied(document : Scribe::Document, change : Scribe::Change) : Nil
+    @applied << change
+  end
+
+  def edited(document : Scribe::Document, changes : Array(Scribe::Change)) : Nil
+    @edited << changes
+  end
+
+  def moved(document : Scribe::Document) : Nil
+    @moves += 1
+  end
+end
+
+GRAPHEMES = Plain.new
+
+def clusters(text : String) : Array(String)
+  GRAPHEMES.clusters(text)
+end
+
+def document(text : String = "", **options) : Scribe::Document
+  Scribe::Document.new(GRAPHEMES, text, **options)
+end
+
+def lines(text : String = "", **options) : Scribe::Document
+  Scribe::Document.new(GRAPHEMES, text, **options, filter: Scribe::MultiLine.new)
+end
+
+def heads(document : Scribe::Document) : Array(Int32)
+  document.carets.map(&.head)
+end
