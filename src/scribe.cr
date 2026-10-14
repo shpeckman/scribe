@@ -13,7 +13,7 @@ require "./scribe/mark"
 require "./scribe/decoration"
 require "./scribe/history"
 require "./scribe/search"
-require "./scribe/highlighter"
+require "./scribe/token"
 require "./scribe/token_source"
 require "./scribe/recall"
 require "./scribe/command"
@@ -23,7 +23,6 @@ require "./scribe/document/editing"
 require "./scribe/document/lines"
 require "./scribe/document/clipboard"
 require "./scribe/document/finder"
-require "./scribe/highlight_cache"
 
 module Scribe
 end

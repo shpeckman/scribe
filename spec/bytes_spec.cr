@@ -84,9 +84,31 @@ describe "Scribe::Buffer bytes" do
   end
 end
 
+private class Marks
+  include Scribe::TokenSource
+  include Scribe::Tokenizer
+
+  def tokens(buffer : Scribe::Buffer, line : Int32) : Array(Scribe::Token)
+    row = buffer.line(line)
+    row.size == 0 ? Scribe::TokenSource::NO_TOKENS : [Scribe::Token.new(0, row.size, "text")]
+  end
+
+  def tokens(text : String) : Array(Array(Scribe::Token))
+    text.split('\n').map { |line| [Scribe::Token.new(0, line.size, "text")] }
+  end
+end
+
 describe Scribe::TokenSource do
-  it "is how a highlight cache serves tokens" do
-    source = Scribe::HighlightCache.new(Scribe::KeywordHighlighter.new(%w(if))).as(Scribe::TokenSource)
-    source.tokens(Scribe::Buffer.new(Plain.new, "if x"), 0).map(&.kind).should eq(["keyword"])
+  it "serves a line's tokens from a buffer" do
+    source = Marks.new.as(Scribe::TokenSource)
+    found  = source.tokens(Scribe::Buffer.new(Plain.new, "if x"), 0)
+    found.map(&.kind).should eq(["text"])
+    found.first.stop.should eq(4)
+  end
+end
+
+describe Scribe::Tokenizer do
+  it "serves tokens for standalone text, one entry per line" do
+    Marks.new.as(Scribe::Tokenizer).tokens("ab\ncd").map(&.size).should eq([1, 1])
   end
 end
