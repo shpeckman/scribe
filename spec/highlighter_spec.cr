@@ -1,36 +1,40 @@
 # spec/highlighter_spec.cr
 require "./spec_helper"
 
-private def cells(text : String) : Array(String)
-  text.chars.map(&.to_s)
-end
-
 private def kinds(found : {Array(Scribe::Highlighter::Token), Int32}, text : String) : Array({String, String})
-  found[0].map { |token| {text[token.start, token.count], token.kind} }
+  row = line(text)
+  found[0].map { |token| {row.slice(token.start, token.stop), token.kind} }
 end
 
 describe Scribe::KeywordHighlighter do
   it "marks keywords, types, numbers, strings and comments" do
     marker = Scribe::KeywordHighlighter.new(%w(def end), comment: "#", suffixes: "?")
     text   = "def ok?(x : Int32) \"a\\\"b\" 0x1F # note"
-    kinds(marker.highlight(cells(text), 0), text).should eq([
+    kinds(marker.highlight(line(text), 0), text).should eq([
       {"def", "keyword"}, {"Int32", "type"}, {"\"a\\\"b\"", "string"}, {"0x1F", "number"}, {"# note", "comment"},
     ])
   end
 
+  it "counts columns in clusters" do
+    marker = Scribe::KeywordHighlighter.new(%w(if))
+    text   = "é👍🏽 if"
+    kinds(marker.highlight(line(text), 0), text).should eq([{"if", "keyword"}])
+    marker.highlight(line(text), 0)[0].first.start.should eq(3)
+  end
+
   it "carries unterminated strings to the next line when asked" do
     marker = Scribe::KeywordHighlighter.new(multiline_strings: true)
-    first  = marker.highlight(cells("x = \"abc"), 0)
+    first  = marker.highlight(line("x = \"abc"), 0)
     first[1].should eq('"'.ord)
-    second = marker.highlight(cells("def\" + 1"), first[1])
+    second = marker.highlight(line("def\" + 1"), first[1])
     kinds(second, "def\" + 1").should eq([{"def\"", "string"}, {"1", "number"}])
     second[1].should eq(0)
-    Scribe::KeywordHighlighter.new.highlight(cells("\"open"), 0)[1].should eq(0)
+    Scribe::KeywordHighlighter.new.highlight(line("\"open"), 0)[1].should eq(0)
   end
 
   it "leaves plain identifiers alone" do
     marker = Scribe::KeywordHighlighter.new(%w(if), types: false)
-    kinds(marker.highlight(cells("Foo if bar"), 0), "Foo if bar").should eq([{"if", "keyword"}])
+    kinds(marker.highlight(line("Foo if bar"), 0), "Foo if bar").should eq([{"if", "keyword"}])
   end
 end
 

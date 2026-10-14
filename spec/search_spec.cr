@@ -1,10 +1,6 @@
 # spec/search_spec.cr
 require "./spec_helper"
 
-private def buffer(text : String) : Scribe::Buffer
-  Scribe::Buffer.new(clusters(text))
-end
-
 describe Scribe::Search do
   it "finds literal matches case-insensitively by default" do
     text   = buffer("Foo foo\nfOO bar")
@@ -24,10 +20,12 @@ describe Scribe::Search do
     search.matches(text).should eq([0...3, 4...10, 11...14, 16...19])
   end
 
-  it "anchors ^ and $ to lines" do
+  it "anchors ^ and $ to lines and lets a regex span lines" do
     text   = buffer("ab\nab")
     search = Scribe::Search.new("^a", regex: true)
     search.matches(text).should eq([0...1, 3...4])
+    search.query = "b\\sa"
+    search.matches(text).should eq([1...4])
   end
 
   it "reports invalid patterns" do
@@ -38,10 +36,11 @@ describe Scribe::Search do
   end
 
   it "maps matches onto grapheme clusters" do
-    text   = buffer("é👍🏽x é")
+    text   = buffer("é👍🏽x é\né")
     search = Scribe::Search.new("é")
-    search.matches(text).should eq([0...1, 4...5])
+    search.matches(text).should eq([0...1, 4...5, 6...7])
     Scribe::Search.new("x").matches(text).should eq([2...3])
+    Scribe::Search.new("x", regex: true).matches(text).should eq([2...3])
   end
 
   it "steps forward and backward with wrapping" do
@@ -55,18 +54,30 @@ describe Scribe::Search do
   end
 
   it "expands capture references in regex replacements" do
-    text   = buffer("key=value")
+    text   = buffer("x\nkey=value")
     search = Scribe::Search.new("(\\w+)=(\\w+)", regex: true)
     range  = search.matches(text).first
     search.expand(text, range, "$2:$1 $$").should eq("value:key $")
-    Scribe::Search.new("key").expand(text, 0...3, "$1").should eq("$1")
+    Scribe::Search.new("key").expand(text, 2...5, "$1").should eq("$1")
   end
 
-  it "refreshes its matches when the buffer changes" do
-    text   = buffer("aa")
+  it "updates literal matches from the lines an edit touched" do
+    text   = buffer("aa\nb\naa")
     search = Scribe::Search.new("a")
-    search.matches(text).size.should eq(2)
-    text.replace(2...2, ["a"])
-    search.matches(text).size.should eq(3)
+    search.matches(text).size.should eq(4)
+    text.replace(4...4, "a\nza")
+    text.text.should eq("aa\nba\nza\naa")
+    search.matches(text).should eq([0...1, 1...2, 4...5, 7...8, 9...10, 10...11])
+    text.replace(0...3, "")
+    search.matches(text).should eq([1...2, 4...5, 6...7, 7...8])
+    search.matches(text).should eq(Scribe::Search.new("a").matches(text))
+  end
+
+  it "rescans fully when its journal no longer reaches back" do
+    text   = buffer("a")
+    search = Scribe::Search.new("a")
+    search.matches(text).size.should eq(1)
+    (Scribe::Buffer::JOURNAL + 5).times { text.replace(0...0, "a") }
+    search.matches(text).size.should eq(text.size)
   end
 end

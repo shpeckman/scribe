@@ -35,9 +35,9 @@ module Scribe
     end
 
     def applied(document : Document, change : Change) : Nil
-      line     = document.buffer.position(change.from)[0]
-      removed  = change.removed.count(Buffer::BREAK)
-      inserted = change.inserted.count(Buffer::BREAK)
+      line     = document.buffer.position(change.from).line
+      removed  = change.removed_lines
+      inserted = change.inserted_lines
 
       @tokens[line..Math.min(line + removed, @tokens.size - 1)] = Array(Array(Highlighter::Token)?).new(inserted + 1, nil) if line < @tokens.size
       @ends[line..Math.min(line + removed, @ends.size - 1)] = Array(Int32).new(inserted + 1, 0) if line < @ends.size

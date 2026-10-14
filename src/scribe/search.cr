@@ -2,6 +2,7 @@
 module Scribe
   class Search
     REFERENCE = /\$(\$|\d+)/
+    NO_RANGES = [] of Range(Int32, Int32)
 
     getter query           : String
     getter? case_sensitive : Bool
@@ -9,14 +10,20 @@ module Scribe
     getter? regex          : Bool
     getter error           : String?
 
-    @pattern : Regex?
-    @cache   : {Buffer, Int32, Array(Range(Int32, Int32))}?
+    @pattern  : Regex?
+    @buffer   : Buffer?
+    @revision : Int32
+    @found    : Array(Range(Int32, Int32))
+    @lines    : Array(Array(Range(Int32, Int32))?)
 
     def initialize(@query : String = "", *, @case_sensitive : Bool = false,
                    @whole_word : Bool = false, @regex : Bool = false)
-      @pattern = nil
-      @error   = nil
-      @cache   = nil
+      @pattern  = nil
+      @error    = nil
+      @buffer   = nil
+      @revision = -1
+      @found    = NO_RANGES
+      @lines    = [] of Array(Range(Int32, Int32))?
       compile
     end
 
@@ -50,14 +57,26 @@ module Scribe
       !@pattern.nil?
     end
 
-    def matches(buffer : Buffer) : Array(Range(Int32, Int32))
-      if (cache = @cache) && cache[0].same?(buffer) && cache[1] == buffer.revision
-        return cache[2]
-      end
+    def lined? : Bool
+      !@regex && !@query.includes?('\n')
+    end
 
-      found  = scan(buffer)
-      @cache = {buffer, buffer.revision, found}
-      found
+    def matches(buffer : Buffer) : Array(Range(Int32, Int32))
+      cached = @buffer
+      return @found if cached && cached.same?(buffer) && @revision == buffer.revision
+
+      pattern = @pattern
+      @found =
+        if pattern.nil?
+          NO_RANGES
+        elsif lined?
+          scan_lines(buffer, pattern, cached && cached.same?(buffer) ? buffer.journal_since(@revision) : nil)
+        else
+          scan_text(buffer, pattern)
+        end
+      @buffer   = buffer
+      @revision = buffer.revision
+      @found
     end
 
     def next(buffer : Buffer, from : Int32) : Range(Int32, Int32)?
@@ -89,7 +108,9 @@ module Scribe
     end
 
     private def compile : Nil
-      @cache   = nil
+      @buffer  = nil
+      @found   = NO_RANGES
+      @lines   = [] of Array(Range(Int32, Int32))?
       @error   = nil
       @pattern = nil
       return if @query.empty?
@@ -103,11 +124,48 @@ module Scribe
       @error = error.message
     end
 
-    private def scan(buffer : Buffer) : Array(Range(Int32, Int32))
-      found   = [] of Range(Int32, Int32)
-      pattern = @pattern || return found
-      text    = buffer.text
-      byte    = 0
+    private def scan_lines(buffer : Buffer, pattern : Regex, journal : Array(Buffer::Entry)?) : Array(Range(Int32, Int32))
+      if journal && @lines.size > 0
+        journal.each do |entry|
+          @lines[entry.line..entry.line + entry.removed] = Array(Array(Range(Int32, Int32))?).new(entry.inserted + 1, nil)
+        end
+      else
+        @lines = Array(Array(Range(Int32, Int32))?).new(buffer.line_count, nil)
+      end
+
+      found = [] of Range(Int32, Int32)
+      start = 0
+      @lines.each_with_index do |cached, index|
+        local = cached || (@lines[index] = scan_line(buffer.line(index), pattern))
+        local.each { |range| found << ((start + range.begin)...(start + range.end)) }
+        start += buffer.line(index).size + 1
+      end
+      found
+    end
+
+    private def scan_line(line : Line, pattern : Regex) : Array(Range(Int32, Int32))
+      found = [] of Range(Int32, Int32)
+      text  = line.text
+      byte  = 0
+
+      while byte <= text.bytesize
+        match = pattern.match_at_byte_index(text, byte) || break
+        head  = match.byte_begin
+        tail  = match.byte_end
+        from  = line.column_at(head)
+        to    = line.column_at(tail, ceil: true)
+        found << (from...to) if to > from
+        break if tail == head && from >= line.size
+        byte = tail > head ? tail : line.byte_at(from + 1)
+      end
+
+      found
+    end
+
+    private def scan_text(buffer : Buffer, pattern : Regex) : Array(Range(Int32, Int32))
+      found = [] of Range(Int32, Int32)
+      text  = buffer.text
+      byte  = 0
 
       while byte <= text.bytesize
         match = pattern.match_at_byte_index(text, byte) || break
@@ -116,8 +174,8 @@ module Scribe
         from  = buffer.offset_at_byte(head)
         to    = buffer.offset_at_byte(tail, ceil: true)
         found << (from...to) if to > from
-        byte = tail > head ? tail : buffer.byte_offset(from + 1)
         break if tail == head && from >= buffer.size
+        byte = tail > head ? tail : buffer.byte_offset(from + 1)
       end
 
       found

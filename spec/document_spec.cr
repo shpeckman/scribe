@@ -5,10 +5,6 @@ private def run(text : Scribe::Document, *commands : Scribe::Command) : Bool
   commands.map { |command| text.run(command) }.last
 end
 
-private def code(text : String) : Scribe::Document
-  document(text, filter: Scribe::MultiLine.new("  "), auto_indent: true)
-end
-
 describe Scribe::Document do
   describe "typing and deleting" do
     it "inserts at the cursor and deletes around it" do
@@ -42,6 +38,7 @@ describe Scribe::Document do
       text.insert("y").should be_false
       text.value = "abcdef"
       text.value.should eq("abc")
+      document("abcdef", max_length: 2).value.should eq("ab")
       long = document("abcdef")
       long.max_length = 3
       long.value.should eq("abc")
@@ -57,6 +54,77 @@ describe Scribe::Document do
       text.value.should eq("")
       text.cursor.should eq(0)
       events.edited.size.should eq(1)
+    end
+
+    it "deletes by word and to the row edges" do
+      text = document("one two three")
+      run(text, Scribe::Command::DeleteWordBackward)
+      text.value.should eq("one two ")
+      text.move(4)
+      text.run(Scribe::Command::DeleteWordForward)
+      text.value.should eq("one  ")
+      text.move(2)
+      text.run(Scribe::Command::DeleteToRowEnd)
+      text.value.should eq("on")
+      text.move(1)
+      text.run(Scribe::Command::DeleteToRowStart)
+      text.value.should eq("n")
+      text.cursor.should eq(0)
+      text.run(Scribe::Command::DeleteToRowStart).should be_true
+      text.value.should eq("n")
+    end
+
+    it "deletes a selection whatever the delete command" do
+      text = document("hello world")
+      text.select_range(2, 8)
+      text.run(Scribe::Command::DeleteWordBackward)
+      text.value.should eq("herld")
+    end
+  end
+
+  describe "auto-closing" do
+    it "pairs brackets and quotes, wraps selections and types over closers" do
+      text = document("", auto_close: true)
+      text.insert("(")
+      text.value.should eq("()")
+      text.cursor.should eq(1)
+      text.insert("x")
+      text.insert(")")
+      text.value.should eq("(x)")
+      text.cursor.should eq(3)
+      text.insert(" ")
+      text.insert("\"")
+      text.value.should eq("(x) \"\"")
+      text.insert("\"")
+      text.value.should eq("(x) \"\"")
+      text.cursor.should eq(6)
+    end
+
+    it "wraps a selection and keeps it selected" do
+      text = document("word", auto_close: true)
+      text.select_range(0, 4)
+      text.insert("[")
+      text.value.should eq("[word]")
+      text.selected_text.should eq("word")
+    end
+
+    it "leaves a quote alone after a word and when pasted" do
+      text = document("don", auto_close: true)
+      text.insert("'")
+      text.value.should eq("don'")
+      text.paste("(")
+      text.value.should eq("don'(")
+    end
+
+    it "removes an empty pair with one backspace" do
+      text = document("", auto_close: true)
+      text.insert("{")
+      text.run(Scribe::Command::DeleteBackward)
+      text.value.should eq("")
+      plain = document("{}")
+      plain.move(1)
+      plain.run(Scribe::Command::DeleteBackward)
+      plain.value.should eq("}")
     end
   end
 
@@ -106,6 +174,37 @@ describe Scribe::Document do
       text.run(Scribe::Command::RowStart)
       text.cursor.should eq(5)
     end
+
+    it "remembers the column it started from across shorter lines" do
+      text = lines("abcdef\nab\nabcdef")
+      text.move(5)
+      text.run(Scribe::Command::Down)
+      text.cursor.should eq(9)
+      text.run(Scribe::Command::Down)
+      text.cursor.should eq(15)
+      text.run(Scribe::Command::Left)
+      text.run(Scribe::Command::Up)
+      text.cursor.should eq(9)
+    end
+
+    it "goes to the first non-blank column and then to the row start" do
+      text = lines("    code")
+      text.run(Scribe::Command::SmartRowStart)
+      text.cursor.should eq(4)
+      text.run(Scribe::Command::SmartRowStart)
+      text.cursor.should eq(0)
+      text.run(Scribe::Command::SmartRowStart)
+      text.cursor.should eq(4)
+    end
+
+    it "goes to the document edges" do
+      text = lines("ab\ncd")
+      text.move(1)
+      text.run(Scribe::Command::DocumentEnd, selecting: true)
+      text.selected_text.should eq("b\ncd")
+      text.run(Scribe::Command::DocumentStart)
+      text.cursor.should eq(0)
+    end
   end
 
   describe "selecting" do
@@ -119,6 +218,18 @@ describe Scribe::Document do
       text.selected?(4).should be_false
       text.run(Scribe::Command::SelectAll)
       text.selected_text.should eq("ab\ncd")
+    end
+
+    it "selects the word or the line under every caret" do
+      text = lines("one two\nthree")
+      text.move(5)
+      text.run(Scribe::Command::SelectWord)
+      text.selected_text.should eq("two")
+      text.run(Scribe::Command::SelectLine)
+      text.selected_text.should eq("one two\n")
+      text.move(10)
+      text.run(Scribe::Command::SelectLine)
+      text.selected_text.should eq("three")
     end
 
     it "merges carets that meet" do
@@ -140,6 +251,21 @@ describe Scribe::Document do
       text.run(Scribe::Command::AddNextOccurrence).should be_false
       text.insert("x")
       text.value.should eq("x bar x x")
+    end
+
+    it "skips an occurrence, selects them all and removes the last caret" do
+      text = document("ab ab ab ab")
+      text.select_range(0, 2)
+      text.run(Scribe::Command::AddNextOccurrence)
+      text.run(Scribe::Command::SkipOccurrence).should be_true
+      text.carets.map(&.range).should eq([0...2, 6...8])
+      text.run(Scribe::Command::RemoveLastCaret).should be_true
+      text.carets.map(&.range).should eq([0...2])
+      text.run(Scribe::Command::RemoveLastCaret).should be_false
+      text.run(Scribe::Command::SelectAllOccurrences).should be_true
+      text.carets.size.should eq(4)
+      text.primary.should eq(0)
+      document("   ").run(Scribe::Command::SelectAllOccurrences).should be_false
     end
 
     it "collapses to the primary caret and reports when there was nothing to collapse" do
@@ -217,12 +343,47 @@ describe Scribe::Document do
     it "replaces several ranges as one step and carries the carets" do
       text = document("a-b-c")
       text.place_carets([Scribe::Caret.at(2), Scribe::Caret.at(5)])
-      text.replace_ranges([{1...2, ["+", "+"]}, {3...4, ["+", "+"]}]).should be_true
+      text.replace_ranges([Scribe::Edit.new(1...2, "++"), Scribe::Edit.new(3...4, "++")]).should be_true
       text.value.should eq("a++b++c")
       heads(text).should eq([3, 7])
-      text.replace_ranges([{0...0, [] of String}]).should be_false
+      text.replace_ranges([Scribe::Edit.new(0...0, "")]).should be_false
       text.undo
       text.value.should eq("a-b-c")
+    end
+
+    it "groups a transaction into one undo step and one notification" do
+      text   = document("abc")
+      events = Recorder.new
+      text.listen(events)
+      result = text.transaction do
+        text.move(0)
+        text.insert("x")
+        text.run(Scribe::Command::DocumentEnd)
+        text.insert("y")
+        text.undo.should be_false
+        42
+      end
+      result.should eq(42)
+      text.value.should eq("xabcy")
+      events.applied.size.should eq(2)
+      events.edited.size.should eq(1)
+      events.edited.first.size.should eq(2)
+      events.moves.should eq(1)
+      text.undo
+      text.value.should eq("abc")
+    end
+
+    it "knows whether it changed since it was saved" do
+      text = document("a")
+      text.modified?.should be_false
+      text.insert("b")
+      text.modified?.should be_true
+      text.mark_saved
+      text.modified?.should be_false
+      text.insert("c")
+      text.modified?.should be_true
+      text.undo
+      text.modified?.should be_false
     end
   end
 
@@ -281,7 +442,7 @@ describe Scribe::Document do
 
   describe "lines" do
     it "inserts plain line breaks or keeps the indentation" do
-      plain = document("  foo", filter: Scribe::MultiLine.new)
+      plain = lines("  foo")
       plain.run(Scribe::Command::NewLine).should be_true
       plain.value.should eq("  foo\n")
       text = code("  foo")
@@ -303,6 +464,25 @@ describe Scribe::Document do
       text.run(Scribe::Command::Outdent).should be_false
       text.undo
       text.value.should eq("  a\nb\nc")
+    end
+
+    it "outdents tab indentation and stray spaces" do
+      text = document("\t\ta\n   b", filter: Scribe::MultiLine.new("\t"), indent: "\t", tab_size: 2)
+      text.run(Scribe::Command::SelectAll)
+      text.run(Scribe::Command::Outdent)
+      text.value.should eq("\ta\n b")
+      text.run(Scribe::Command::Outdent)
+      text.value.should eq("a\nb")
+    end
+
+    it "toggles a line comment at the shallowest indentation, skipping blank lines" do
+      text = code("  if x\n\n    y", comment: "#")
+      text.run(Scribe::Command::SelectAll)
+      text.run(Scribe::Command::ToggleComment).should be_true
+      text.value.should eq("  # if x\n\n  #   y")
+      text.run(Scribe::Command::ToggleComment)
+      text.value.should eq("  if x\n\n    y")
+      code("x").run(Scribe::Command::ToggleComment).should be_false
     end
 
     it "moves, duplicates and deletes the lines under every caret" do
@@ -333,7 +513,7 @@ describe Scribe::Document do
 
   describe "find and replace" do
     it "selects matches forward and backward" do
-      text   = document("one two one\ntwo one")
+      text   = lines("one two one\ntwo one")
       search = Scribe::Search.new("one")
       text.move(0)
       text.find(search).should eq(0...3)
@@ -357,6 +537,61 @@ describe Scribe::Document do
       text.undo
       text.value.should eq("1=a b=2 c=3")
       text.replace_all(Scribe::Search.new("zzz"), "x").should eq(0)
+    end
+  end
+
+  describe "line endings" do
+    it "keeps line feeds inside and exports the endings it was given" do
+      text = lines("a\r\nb\r\n")
+      text.value.should eq("a\nb\n")
+      text.line_ending.should eq(Scribe::LineEnding::CRLF)
+      text.export.should eq("a\r\nb\r\n")
+      text.value = "x\ny"
+      text.line_ending.should eq(Scribe::LineEnding::LF)
+      text.line_ending = Scribe::LineEnding::CR
+      text.export.should eq("x\ry")
+      text.value = "single"
+      text.line_ending.should eq(Scribe::LineEnding::CR)
+    end
+  end
+
+  describe "read-only" do
+    it "refuses edits but still moves, selects and copies" do
+      board = Scribe::Register.new
+      text  = document("fixed", clipboard: board, read_only: true)
+      text.insert("x").should be_false
+      text.paste("x").should be_false
+      text.run(Scribe::Command::DeleteBackward).should be_false
+      text.run(Scribe::Command::Undo).should be_false
+      text.run(Scribe::Command::SelectAll).should be_true
+      text.run(Scribe::Command::Copy).should be_true
+      board.text.should eq("fixed")
+      text.run(Scribe::Command::Cut).should be_false
+      text.replace_all(Scribe::Search.new("f"), "g").should eq(0)
+      text.value.should eq("fixed")
+      text.value = "set from code"
+      text.value.should eq("set from code")
+    end
+  end
+
+  describe "marks" do
+    it "follows edits, with gravity deciding which side an insertion at the mark lands on" do
+      text  = document("abcdef")
+      left  = text.mark(3)
+      right = text.mark(3, Scribe::Gravity::Right)
+      tail  = text.mark(5)
+      text.move(3)
+      text.insert("XY")
+      left.offset.should eq(3)
+      right.offset.should eq(5)
+      tail.offset.should eq(7)
+      text.select_range(2, 6)
+      text.run(Scribe::Command::DeleteForward)
+      left.offset.should eq(2)
+      right.offset.should eq(2)
+      tail.offset.should eq(3)
+      text.unmark(tail)
+      text.marks.size.should eq(2)
     end
   end
 

@@ -5,7 +5,7 @@ module Scribe
     abstract def row_of(offset : Int32) : Int32
     abstract def row_start(row : Int32) : Int32
     abstract def row_end(row : Int32) : Int32
-    abstract def position_of(offset : Int32) : {Int32, Int32}
+    abstract def cell_of(offset : Int32) : Cell
     abstract def offset_in(row : Int32, column : Int32) : Int32
     abstract def page_rows : Int32
   end
@@ -13,7 +13,7 @@ module Scribe
   class LineLayout
     include Layout
 
-    def initialize(@buffer : Buffer, @graphemes : Graphemes)
+    def initialize(@buffer : Buffer)
     end
 
     def row_count : Int32
@@ -21,7 +21,7 @@ module Scribe
     end
 
     def row_of(offset : Int32) : Int32
-      @buffer.position(offset)[0]
+      @buffer.position(offset).line
     end
 
     def row_start(row : Int32) : Int32
@@ -32,24 +32,14 @@ module Scribe
       @buffer.line_end(clamp(row))
     end
 
-    def position_of(offset : Int32) : {Int32, Int32}
-      line, column = @buffer.position(offset)
-      cells = @buffer.line(line)
-      width = 0
-      column.times { |index| width += @graphemes.width(cells.unsafe_fetch(index)) }
-      {width, line}
+    def cell_of(offset : Int32) : Cell
+      found = @buffer.position(offset)
+      Cell.new(@buffer.width(found.line, 0, found.column), found.line)
     end
 
     def offset_in(row : Int32, column : Int32) : Int32
-      line  = clamp(row)
-      cells = @buffer.line(line)
-      edge  = 0
-      cells.each_with_index do |cluster, index|
-        extent = @graphemes.width(cluster)
-        return @buffer.line_start(line) + index if column < edge + extent
-        edge += extent
-      end
-      @buffer.line_end(line)
+      line = clamp(row)
+      @buffer.line_start(line) + @buffer.index(line, column)
     end
 
     def page_rows : Int32
