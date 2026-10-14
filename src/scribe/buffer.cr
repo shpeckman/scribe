@@ -4,7 +4,7 @@ module Scribe
     BREAK   = "\n"
     JOURNAL = 256
 
-    record Entry, revision : Int32, line : Int32, removed : Int32, inserted : Int32
+    record Entry, revision : Int32, line : Int32, removed : Int32, inserted : Int32, change : Change
 
     getter graphemes : Graphemes
     getter size      : Int32
@@ -207,22 +207,99 @@ module Scribe
     end
 
     def find(needle : String, from : Int32 = 0) : Range(Int32, Int32)?
-      return nil if needle.empty? || needle.bytesize > text.bytesize
+      return nil if needle.empty? || needle.bytesize > @bytesize
 
-      start = byte_offset(from)
-      locate(needle, start, text.bytesize) || locate(needle, 0, start + needle.bytesize - 1)
+      start = from.clamp(0, @size)
+      at    = position(start)
+      each_match(needle, at.line, at.column) { |range| return range }
+      each_match(needle, 0, 0) { |range| return range if range.begin < start }
+      nil
     end
 
     def find_all(needle : String) : Array(Range(Int32, Int32))
       found = [] of Range(Int32, Int32)
-      return found if needle.empty?
+      return found if needle.empty? || needle.bytesize > @bytesize
 
-      byte = 0
-      while range = locate(needle, byte, text.bytesize)
-        found << range
-        byte = byte_offset(range.end)
-      end
+      each_match(needle, 0, 0) { |range| found << range }
       found
+    end
+
+    private def each_match(needle : String, line : Int32, column : Int32, & : Range(Int32, Int32) -> Nil) : Nil
+      parts = needle.split(BREAK)
+      return each_flat(parts.first, line, column) { |range| yield range } if parts.size == 1
+
+      tail = parts.size - 1
+      row  = line
+      while row + tail < @lines.size
+        head = ends_at(@lines[row], parts.first, row == line ? column : 0)
+        if head && spans?(parts, row)
+          last  = row + tail
+          stop  = starts_at(@lines[last], parts.last)
+          start = line_start(row) + head
+          if stop
+            yield start...(line_start(last) + stop)
+            row = last
+            next
+          end
+        end
+        row += 1
+      end
+    end
+
+    private def each_flat(needle : String, line : Int32, column : Int32, & : Range(Int32, Int32) -> Nil) : Nil
+      row = line
+      at  = column
+      while row < @lines.size
+        if found = match_in(@lines[row], needle, at)
+          start = line_start(row) + found[0]
+          yield start...(start + found[1])
+          at = found[0] + found[1]
+        else
+          row += 1
+          at = 0
+        end
+      end
+    end
+
+    private def match_in(row : Line, needle : String, from : Int32) : {Int32, Int32}?
+      byte  = row.byte_at(from)
+      limit = row.bytesize - needle.bytesize
+      while byte <= limit
+        head = row.text.byte_index(needle, byte) || return nil
+        return nil if head > limit
+
+        start = row.column_at(head)
+        stop  = row.column_at(head + needle.bytesize)
+        return {start, stop - start} if row.boundary(start) == head && row.boundary(stop) == head + needle.bytesize
+
+        byte = head + 1
+      end
+      nil
+    end
+
+    private def ends_at(row : Line, part : String, from : Int32) : Int32?
+      return row.size if part.empty? && from <= row.size
+      return nil if part.bytesize > row.bytesize
+
+      head = row.bytesize - part.bytesize
+      return nil unless row.text.to_slice[head, part.bytesize] == part.to_slice
+
+      start = row.column_at(head)
+      return nil unless row.boundary(start) == head && start >= from
+
+      start
+    end
+
+    private def starts_at(row : Line, part : String) : Int32?
+      return 0 if part.empty?
+      return nil unless row.starts_with?(part)
+
+      stop = row.column_at(part.bytesize)
+      row.boundary(stop) == part.bytesize ? stop : nil
+    end
+
+    private def spans?(parts : Array(String), row : Int32) : Bool
+      (1...parts.size - 1).all? { |index| @lines[row + index].text == parts[index] }
     end
 
     def journal_since(revision : Int32) : Array(Entry)?
@@ -232,6 +309,10 @@ module Scribe
       return nil if first.revision > revision + 1
 
       @journal.select { |entry| entry.revision > revision }
+    end
+
+    def changes_since(revision : Int32) : Array(Change)?
+      journal_since(revision).try(&.map(&.change))
     end
 
     def replace(range : Range(Int32, Int32), text : String) : Change
@@ -261,36 +342,20 @@ module Scribe
       @bytesize += fresh.sum(&.bytesize) + (fresh.size - 1) - old_bytes
       @revision += 1
       @text      = nil
-      @journal << Entry.new(@revision, head.line, tail.line - head.line, fresh.size - 1)
-      @journal.shift if @journal.size > JOURNAL
 
       inserted_size = new_total - lead - trail
       change = Change.new(start, removed, slice_text(start...(start + inserted_size)), old_total - lead - trail, inserted_size)
+      @journal << Entry.new(@revision, head.line, tail.line - head.line, fresh.size - 1, change)
+      @journal.shift if @journal.size > JOURNAL
       @listeners.dup.each(&.call(change))
       change
-    end
-
-    private def locate(needle : String, from : Int32, limit : Int32) : Range(Int32, Int32)?
-      haystack = text
-      byte     = from
-      while byte <= limit - needle.bytesize && (head = haystack.byte_index(needle, byte))
-        break if head + needle.bytesize > limit
-
-        tail  = head + needle.bytesize
-        start = offset_at_byte(head)
-        stop  = offset_at_byte(tail)
-        return start...stop if byte_offset(start) == head && byte_offset(stop) == tail
-
-        byte = head + 1
-      end
-      nil
     end
 
     private def common_lead(before : Line, after : Line, limit : Int32) : Int32
       count = 0
       while count < before.size && count < after.size
-        stop = before.marks.unsafe_fetch(count + 1)
-        break if stop > limit || stop != after.marks.unsafe_fetch(count + 1)
+        stop = before.boundary(count + 1)
+        break if stop > limit || stop != after.boundary(count + 1)
         count += 1
       end
       count
@@ -301,9 +366,9 @@ module Scribe
       floor = same ? lead : 0
       edge  = single ? lead : 0
       while count < before.size - floor && count < after.size - edge
-        start = before.marks.unsafe_fetch(before.size - count - 1)
+        start = before.boundary(before.size - count - 1)
         break if start < limit
-        break if before.bytesize - start != after.bytesize - after.marks.unsafe_fetch(after.size - count - 1)
+        break if before.bytesize - start != after.bytesize - after.boundary(after.size - count - 1)
         count += 1
       end
       count

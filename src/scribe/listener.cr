@@ -7,10 +7,13 @@ module Scribe
     def edited(document : Document, changes : Array(Change)) : Nil
     end
 
-    def moved(document : Document) : Nil
+    def moved(view : View) : Nil
     end
 
     def decorated(document : Document) : Nil
+    end
+
+    def annotated(document : Document) : Nil
     end
   end
 end

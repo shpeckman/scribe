@@ -133,10 +133,9 @@ describe Scribe::Buffer do
     text = buffer("a\nb\nc")
     text.replace(2...3, "x\ny")
     text.replace(0...1, "q")
-    text.journal_since(0).should eq([
-      Scribe::Buffer::Entry.new(1, 1, 0, 1),
-      Scribe::Buffer::Entry.new(2, 0, 0, 0),
-    ])
+    text.journal_since(0).not_nil!.map { |entry| {entry.revision, entry.line, entry.removed, entry.inserted} }
+      .should eq([{1, 1, 0, 1}, {2, 0, 0, 0}])
+    text.journal_since(0).not_nil!.map(&.change.inserted).should eq(["x\ny", "q"])
     text.journal_since(2).should eq([] of Scribe::Buffer::Entry)
     text.journal_since(5).should be_nil
   end
@@ -156,5 +155,39 @@ describe Scribe::Line do
     seen = [] of Int32
     row.each_cluster(1, 3) { |_bytes, column| seen << column }
     seen.should eq([1, 2])
+  end
+end
+
+describe "Scribe::Buffer literal search" do
+  it "finds needles that span lines, at line starts and line ends" do
+    text = buffer("one\ntwo\nthree\ntwo\n")
+    text.find("one\ntwo").should eq(0...7)
+    text.find("two\nthree").should eq(4...13)
+    text.find("\ntwo").should eq(3...7)
+    text.find("two\n").should eq(4...8)
+    text.find("one\ntwo\nthree").should eq(0...13)
+    text.find("one\nthree").should be_nil
+    text.find_all("two").should eq([4...7, 14...17])
+  end
+
+  it "matches a needle spanning three lines only where every middle line is whole" do
+    text = buffer("a\nmid\nb\na\nnot\nb")
+    text.find("a\nmid\nb").should eq(0...7)
+    text.find_all("a\nmid\nb").should eq([0...7])
+    text.find("a\nnot\nb").should eq(8...15)
+  end
+
+  it "keeps cluster alignment across lines" do
+    text = buffer("é\nxé")
+    text.find("\nx").should eq(1...3)
+    text.find("é\nx").should eq(0...3)
+  end
+
+  it "does not materialise the whole text to search" do
+    text = buffer("alpha\nbeta\ngamma")
+    before = text.@text
+    text.find("beta")
+    text.find_all("a")
+    text.@text.should eq(before)
   end
 end

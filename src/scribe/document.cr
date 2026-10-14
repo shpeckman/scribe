@@ -1,33 +1,50 @@
 # src/scribe/document.cr
 module Scribe
   class Document
-    alias Box = {Int32, Int32, Int32, Int32}
-
-    record Stroke, range : Range(Int32, Int32), text : String, anchor : Int32? = nil, head : Int32? = nil
-
     getter graphemes   : Graphemes
     getter buffer      : Buffer
     getter history     : History
-    getter carets      : Array(Caret)
-    getter primary     : Int32
     getter max_length  : Int32?
-    getter box         : Box?
     getter marks       : Array(Mark)
     getter decorations : Array(Decoration)
+    getter annotations : Array(Annotation)
+    getter view        : View { View.new(self, layout: @seed_layout, copy_on_select: @seed_copy_on_select) }
 
-    property filter          : Filter
-    property clipboard       : Clipboard
-    property layout          : Layout
-    property line_ending     : LineEnding
-    property indent          : String
-    property comment         : String?
-    property tab_size        : Int32
-    property? auto_indent    : Bool
-    property? auto_close     : Bool
-    property? copyable       : Bool
-    property? copy_on_select : Bool
-    property? dragging       : Bool
-    property? read_only      : Bool
+    property filter       : Filter
+    property clipboard    : Clipboard
+    property line_ending  : LineEnding
+    property indent       : String
+    property comment      : String?
+    property tab_size     : Int32
+    property? auto_indent : Bool
+    property? auto_close  : Bool
+    property? copyable    : Bool
+    property? final_newline : Bool
+    property? read_only   : Bool
+
+    def views : Array(View)
+      view
+      @views
+    end
+
+    delegate carets, primary, primary_caret, cursor, box, layout, dragging?, copy_on_select?,
+      selection, selection?, selected_text, selected_texts, selected?, multiple?, run, move, move_carets,
+      select_range, select_all, select_word, select_line, place_carets, add_caret, collapse,
+      remove_last_caret, add_next_occurrence, skip_occurrence, select_all_occurrences, start_box,
+      select_box, clear_box, insert, paste, auto_copy, find, replace_match, replace_all, brackets,
+      to: view
+
+    def layout=(value : Layout) : Layout
+      view.layout = value
+    end
+
+    def dragging=(value : Bool) : Bool
+      view.dragging = value
+    end
+
+    def copy_on_select=(value : Bool) : Bool
+      view.copy_on_select = value
+    end
 
     @listeners     : Array(Listener)
     @depth         : Int32
@@ -35,6 +52,10 @@ module Scribe
     @batch_before  : Array(Caret)
     @batch_primary : Int32
     @batch_moved   : Bool
+    @batch_view    : View?
+    @acting        : View?
+    @seed_layout   : Layout?
+    @seed_copy_on_select : Bool
 
     def initialize(@graphemes : Graphemes, text : String = "", *,
                    @filter         : Filter    = SingleLine.new,
@@ -47,7 +68,8 @@ module Scribe
                    @auto_indent    : Bool      = false,
                    @auto_close     : Bool      = false,
                    @copyable       : Bool      = true,
-                   @copy_on_select : Bool      = false,
+                   @final_newline  : Bool      = false,
+                   copy_on_select  : Bool      = false,
                    @read_only      : Bool      = false)
       @line_ending = LineEnding.detect(text)
       prepared     = @filter.filter(LineEnding.normalize(text))
@@ -57,21 +79,38 @@ module Scribe
 
       buffer         = Buffer.new(@graphemes, prepared)
       @buffer        = buffer
-      @carets        = [Caret.at(buffer.size)]
-      @primary       = 0
       @history       = History.new(@graphemes)
-      @box           = nil
       @marks         = [] of Mark
       @decorations   = [] of Decoration
-      @dragging      = false
+      @annotations   = [] of Annotation
       @listeners     = [] of Listener
       @depth         = 0
       @batch         = [] of Change
-      @batch_before  = @carets
+      @batch_before  = [] of Caret
       @batch_primary = 0
       @batch_moved   = false
-      @layout        = layout || LineLayout.new(buffer)
+      @batch_view    = nil
+      @acting        = nil
+      @views         = [] of View
+      @seed_layout   = layout
+      @seed_copy_on_select = copy_on_select
       buffer.on_change { |change| applied(change) }
+    end
+
+    protected def attach(view : View) : Nil
+      @views << view
+    end
+
+    protected def detach(view : View) : Nil
+      @views.delete(view)
+    end
+
+    protected def stirred(view : View) : Nil
+      if @depth > 0
+        @batch_moved = true
+      else
+        @listeners.dup.each(&.moved(view))
+      end
     end
 
     def listen(listener : Listener) : Proc(Nil)
@@ -84,44 +123,13 @@ module Scribe
     end
 
     def export : String
-      @line_ending.lf? ? value : value.gsub('\n', @line_ending.sequence)
+      text = value
+      text += Buffer::BREAK if @final_newline && !text.empty? && !text.ends_with?(Buffer::BREAK)
+      @line_ending.lf? ? text : text.gsub('\n', @line_ending.sequence)
     end
 
     def length : Int32
       @buffer.size
-    end
-
-    def primary_caret : Caret
-      @carets[@primary]
-    end
-
-    def cursor : Int32
-      primary_caret.head
-    end
-
-    def selection? : Bool
-      !primary_caret.empty?
-    end
-
-    def selection : Range(Int32, Int32)
-      primary_caret.range
-    end
-
-    def selected_text : String
-      @buffer.slice_text(selection)
-    end
-
-    def selected_texts : Array(String)
-      @carets.reject(&.empty?).map { |caret| @buffer.slice_text(caret.range) }
-    end
-
-    def selected?(offset : Int32) : Bool
-      index = @carets.bsearch_index { |caret| caret.stop > offset } || return false
-      @carets.unsafe_fetch(index).includes?(offset)
-    end
-
-    def multiple? : Bool
-      @carets.size > 1
     end
 
     def modified? : Bool
@@ -136,16 +144,20 @@ module Scribe
       @line_ending = LineEnding.detect(value) if value.includes?('\n') || value.includes?('\r')
       text = limit(prepare(value))
 
+      seat = self.view
+
       if text == @buffer.text
-        seat([Caret.at(length)], 0)
+        seat.seat([Caret.at(length)], 0)
         return self.value
       end
 
-      before  = @carets
-      primary = @primary
+      before  = seat.carets
+      primary = seat.primary
+      @acting = seat
       change  = @buffer.replace(0...length, text)
-      seat([Caret.at(length)], 0)
-      record(History::Kind::Other, [change], before, primary)
+      seat.seat([Caret.at(length)], 0)
+      record(History::Kind::Other, [change], before, primary, seat)
+      @acting = nil
       changed([change])
       self.value
     end
@@ -182,6 +194,32 @@ module Scribe
       @listeners.dup.each(&.decorated(self))
     end
 
+    def annotate(source : String, entries : Array(Annotation)) : Nil
+      @annotations.reject!(&.source.==(source))
+      entries.each do |entry|
+        entry.source = source
+        @annotations << entry
+      end
+      @annotations.sort_by!(&.offset)
+      @listeners.dup.each(&.annotated(self))
+    end
+
+    def annotations(from : Int32, to : Int32) : Array(Annotation)
+      @annotations.select { |entry| from <= entry.offset <= to }
+    end
+
+    def annotations_at(offset : Int32) : Array(Annotation)
+      @annotations.select(&.offset.==(offset))
+    end
+
+    def annotations_on(line : Int32) : Array(Annotation)
+      return [] of Annotation unless 0 <= line < @buffer.line_count
+
+      first = @buffer.line_start(line)
+      last  = @buffer.line_end(line)
+      @annotations.select { |entry| first <= entry.offset <= last }
+    end
+
     def decorations(from : Int32, to : Int32) : Array(Decoration)
       @decorations.select(&.overlaps?(from, to))
     end
@@ -190,13 +228,31 @@ module Scribe
       @decorations.select(&.covers?(offset))
     end
 
+    def revision : Int32
+      @buffer.revision
+    end
+
+    def map(offset : Int32, from : Int32, gravity : Gravity = Gravity::Left) : Int32?
+      changes = @buffer.changes_since(from) || return nil
+      spot    = Mark.new(offset.clamp(0, length), gravity)
+      changes.each { |change| spot.follow(change) }
+      spot.offset
+    end
+
+    def map(range : Range(Int32, Int32), from : Int32) : Range(Int32, Int32)?
+      start = map(range.begin, from, Gravity::Right) || return nil
+      stop  = map(Math.max(range.end, range.begin), from, Gravity::Left) || return nil
+      start...Math.max(stop, start)
+    end
+
     def transaction(& : -> T) : T forall T
       outer = @depth == 0
       if outer
         @batch         = [] of Change
-        @batch_before  = @carets
-        @batch_primary = @primary
+        @batch_before  = view.carets
+        @batch_primary = view.primary
         @batch_moved   = false
+        @batch_view    = nil
       end
 
       @depth += 1
@@ -208,81 +264,36 @@ module Scribe
       end
     end
 
-    def run(command : Command, selecting : Bool = false) : Bool
-      return false if @read_only && command.edits?
-
-      case command
-      in .left?                   then move_carets(selecting) { |caret| step(caret, -1, false, selecting) }
-      in .right?                  then move_carets(selecting) { |caret| step(caret, 1, false, selecting) }
-      in .word_left?              then move_carets(selecting) { |caret| step(caret, -1, true, selecting) }
-      in .word_right?             then move_carets(selecting) { |caret| step(caret, 1, true, selecting) }
-      in .row_start?              then move_carets(selecting) { |caret| @layout.row_start(@layout.row_of(caret.head)) }
-      in .smart_row_start?        then move_carets(selecting) { |caret| smart_start(caret.head) }
-      in .row_end?                then move_carets(selecting) { |caret| @layout.row_end(@layout.row_of(caret.head)) }
-      in .up?                     then move_vertically(-1, selecting)
-      in .down?                   then move_vertically(1, selecting)
-      in .page_up?                then move_vertically(-page, selecting)
-      in .page_down?              then move_vertically(page, selecting)
-      in .document_start?         then move_carets(selecting) { |_caret| 0 }
-      in .document_end?           then move_carets(selecting) { |_caret| length }
-      in .select_all?             then select_all
-      in .select_word?            then select_word
-      in .select_line?            then select_line
-      in .collapse?               then return collapse
-      in .add_next_occurrence?    then return add_next_occurrence
-      in .skip_occurrence?        then return skip_occurrence
-      in .select_all_occurrences? then return select_all_occurrences
-      in .add_caret_above?        then add_beside(@carets.first.head, -1)
-      in .add_caret_below?        then add_beside(@carets.last.head, 1)
-      in .remove_last_caret?      then return remove_last_caret
-      in .box_up?                 then box_step(-1, 0)
-      in .box_down?               then box_step(1, 0)
-      in .box_left?               then box_step(0, -1)
-      in .box_right?              then box_step(0, 1)
-      in .delete_backward?        then delete_backward
-      in .delete_forward?         then delete_forward
-      in .delete_word_backward?   then delete_word(-1)
-      in .delete_word_forward?    then delete_word(1)
-      in .delete_to_row_start?    then delete_to_row(start: true)
-      in .delete_to_row_end?      then delete_to_row(start: false)
-      in .new_line?               then return new_line
-      in .tab?                    then tab
-      in .indent?                 then return indent_lines
-      in .outdent?                then return outdent_lines
-      in .toggle_comment?         then return toggle_comment
-      in .move_lines_up?          then return move_lines(-1)
-      in .move_lines_down?        then return move_lines(1)
-      in .duplicate_lines?        then return duplicate_lines
-      in .delete_lines?           then return delete_lines
-      in .copy?                   then copy
-      in .cut?                    then cut
-      in .paste?                  then paste_clipboard
-      in .undo?                   then return undo
-      in .redo?                   then return redo
-      end
-      true
-    end
-
-    def undo : Bool
+    def undo(view : View = self.view) : Bool
       return false if @depth > 0
 
-      step, applied = @history.undo(@buffer) || return false
-      seat(step.before, step.before_primary)
+      @acting = view
+      step, applied = @history.undo(@buffer) || begin
+        @acting = nil
+        return false
+      end
+      view.seat(step.before, step.before_primary)
+      @acting = nil
       changed(applied)
       true
     end
 
-    def redo : Bool
+    def redo(view : View = self.view) : Bool
       return false if @depth > 0
 
-      step, applied = @history.redo(@buffer) || return false
-      seat(step.after, step.after_primary)
+      @acting = view
+      step, applied = @history.redo(@buffer) || begin
+        @acting = nil
+        return false
+      end
+      view.seat(step.after, step.after_primary)
+      @acting = nil
       changed(applied)
       true
     end
 
     def replace_ranges(edits : Array(Edit), kind : History::Kind = History::Kind::Other,
-                       after : Array(Caret)? = nil) : Bool
+                       after : Array(Caret)? = nil, *, view : View = self.view) : Bool
       ordered = edits.sort_by { |edit| {edit.range.begin, edit.range.end} }
       floor   = 0
       kept    = [] of Edit
@@ -296,25 +307,27 @@ module Scribe
 
       return false if kept.empty?
 
-      before  = @carets
-      primary = @primary
+      before  = view.carets
+      primary = view.primary
       sizes   = kept.map { |edit| {edit.range, count(edit.text)} }
       applied = [] of Change
+      @acting = view
       kept.reverse_each { |edit| applied << @buffer.replace(edit.range, edit.text) }
 
       after ||= before.map { |caret| Caret.new(carry(caret.anchor, sizes), carry(caret.head, sizes)) }
 
-      seat(after, primary)
-      record(kind, applied, before, primary)
+      view.seat(after, primary)
+      record(kind, applied, before, primary, view)
+      @acting = nil
       changed(applied)
       true
     end
 
-    private def apply(kind : History::Kind, & : Caret, Int32 -> Stroke?) : Bool
+    protected def apply(view : View, kind : History::Kind, & : Caret, Int32 -> Stroke?) : Bool
       return false if @read_only
 
-      before  = @carets
-      primary = @primary
+      before  = view.carets
+      primary = view.primary
       strokes = Array(Stroke?).new(before.size)
       before.each_with_index { |caret, index| strokes << yield(caret, index) }
 
@@ -345,6 +358,7 @@ module Scribe
 
       changes = Array(Change?).new(strokes.size, nil)
       applied = [] of Change
+      @acting = view
       (strokes.size - 1).downto(0) do |index|
         if stroke = strokes[index]
           change = @buffer.replace(stroke.range, stroke.text)
@@ -369,43 +383,20 @@ module Scribe
         end
       end
 
-      seat(after, primary)
-      record(kind, applied, before, primary)
+      view.seat(after, primary)
+      record(kind, applied, before, primary, view)
+      @acting = nil
       changed(applied)
       true
     end
 
-    private def seat(list : Array(Caret), lead : Int32) : Nil
-      list   = [Caret.at(length)] if list.empty?
-      limit  = length
-      leader = list[lead.clamp(0, list.size - 1)].clamp(limit)
-      sorted = list.map(&.clamp(limit)).sort_by! { |caret| {caret.start, caret.stop} }
-      merged = [] of Caret
-
-      sorted.each do |caret|
-        last = merged.last?
-        if last && (caret.start < last.stop || caret.start == last.start)
-          merged[-1] = last.union(caret)
-        else
-          merged << caret
-        end
-      end
-
-      @carets  = merged
-      @primary = merged.index { |caret| caret.start <= leader.head <= caret.stop } || merged.size - 1
-
-      if @depth > 0
-        @batch_moved = true
-      else
-        @listeners.dup.each(&.moved(self))
-      end
-    end
-
-    private def record(kind : History::Kind, changes : Array(Change), before : Array(Caret), primary : Int32) : Nil
+    private def record(kind : History::Kind, changes : Array(Change), before : Array(Caret),
+                       primary : Int32, view : View) : Nil
       if @depth > 0
         @batch.concat(changes)
+        @batch_view ||= view
       else
-        @history.record(kind, changes, before, primary, @carets, @primary)
+        @history.record(kind, changes, before, primary, view.carets, view.primary)
       end
     end
 
@@ -414,16 +405,22 @@ module Scribe
     end
 
     private def finish : Nil
-      batch  = @batch
-      @batch = [] of Change
-      @history.record(History::Kind::Other, batch, @batch_before, @batch_primary, @carets, @primary) unless batch.empty?
-      @listeners.dup.each(&.moved(self)) if @batch_moved
+      batch       = @batch
+      acting      = @batch_view || self.view
+      @batch      = [] of Change
+      @batch_view = nil
+      @history.record(History::Kind::Other, batch, @batch_before, @batch_primary, acting.carets, acting.primary) unless batch.empty?
+      @listeners.dup.each(&.moved(acting)) if @batch_moved
+      @batch_moved = false
       @listeners.dup.each(&.edited(self, batch)) unless batch.empty?
     end
 
     private def applied(change : Change) : Nil
       @marks.each(&.follow(change))
       @decorations.each(&.follow(change))
+      @annotations.each(&.follow(change))
+      acting = @acting
+      @views.each { |view| view.follow(change) unless acting && view.same?(acting) }
       @listeners.dup.each(&.applied(self, change))
     end
 
@@ -438,11 +435,11 @@ module Scribe
       offset + delta
     end
 
-    private def prepare(text : String) : String
+    protected def prepare(text : String) : String
       @filter.filter(LineEnding.normalize(text))
     end
 
-    private def count(text : String) : Int32
+    protected def count(text : String) : Int32
       text.empty? ? 0 : @graphemes.boundaries(text).size - 1
     end
 
