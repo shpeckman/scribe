@@ -7,7 +7,7 @@ module Scribe
       end
     end
 
-    abstract def highlight(line : Array(String), state : Int32) : {Array(Token), Int32}
+    abstract def highlight(line : Line, state : Int32) : {Array(Token), Int32}
   end
 
   class KeywordHighlighter < Highlighter
@@ -20,7 +20,7 @@ module Scribe
     DIGITS  = "0123456789abcdefABCDEFxXoObB_."
 
     getter keywords           : Set(String)
-    getter comment            : Array(String)
+    getter comment            : String?
     getter quotes             : String
     getter suffixes           : String
     getter? multiline_strings : Bool
@@ -30,10 +30,10 @@ module Scribe
                    @quotes : String = "\"'", @suffixes : String = "", @multiline_strings : Bool = false,
                    @types : Bool = true)
       @keywords = keywords.to_set
-      @comment  = comment.try { |prefix| prefix.chars.map(&.to_s) } || [] of String
+      @comment  = comment.presence
     end
 
-    def highlight(line : Array(String), state : Int32) : {Array(Token), Int32}
+    def highlight(line : Line, state : Int32) : {Array(Token), Int32}
       tokens = [] of Token
       size   = line.size
       index  = 0
@@ -73,7 +73,7 @@ module Scribe
           while stop < size && word?(lead(line, stop))
             stop += 1
           end
-          name = line[index, stop - index].join
+          name = line.slice(index, stop)
           kind = @keywords.includes?(name) ? KEYWORD : (@types && char.uppercase? ? TYPE : nil)
           tokens << Token.new(index, stop - index, kind) if kind
           index = stop
@@ -85,21 +85,20 @@ module Scribe
       {tokens, 0}
     end
 
-    private def lead(line : Array(String), index : Int32) : Char
-      line.unsafe_fetch(index)[0]? || ' '
+    private def lead(line : Line, index : Int32) : Char
+      line.char(index)
     end
 
     private def word?(char : Char) : Bool
       char.alphanumeric? || char == '_' || @suffixes.includes?(char)
     end
 
-    private def comment?(line : Array(String), index : Int32) : Bool
-      return false if @comment.empty? || index + @comment.size > line.size
-
-      @comment.each_with_index.all? { |cluster, offset| line.unsafe_fetch(index + offset) == cluster }
+    private def comment?(line : Line, index : Int32) : Bool
+      prefix = @comment || return false
+      line.starts_with?(prefix, index)
     end
 
-    private def close(line : Array(String), from : Int32, quote : Char) : Int32?
+    private def close(line : Line, from : Int32, quote : Char) : Int32?
       index = from
       while index < line.size
         char = lead(line, index)

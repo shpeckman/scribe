@@ -8,8 +8,8 @@ module Scribe
   end
 
   module Graphemes
-    abstract def clusters(text : String) : Array(String)
-    abstract def kind(cluster : String) : ClusterKind
-    abstract def width(cluster : String) : Int32
+    abstract def boundaries(text : String) : Array(Int32)
+    abstract def kind(cluster : Bytes) : ClusterKind
+    abstract def width(cluster : Bytes) : Int32
   end
 end

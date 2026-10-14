@@ -1,6 +1,6 @@
 # src/scribe/caret.cr
 module Scribe
-  record Caret, anchor : Int32, head : Int32 do
+  record Caret, anchor : Int32, head : Int32, goal : Int32? = nil do
     def self.at(offset : Int32) : Caret
       new(offset, offset)
     end
@@ -30,11 +30,11 @@ module Scribe
     end
 
     def clamp(limit : Int32) : Caret
-      Caret.new(@anchor.clamp(0, limit), @head.clamp(0, limit))
+      copy_with(anchor: @anchor.clamp(0, limit), head: @head.clamp(0, limit))
     end
 
     def shift(delta : Int32) : Caret
-      Caret.new(@anchor + delta, @head + delta)
+      copy_with(anchor: @anchor + delta, head: @head + delta)
     end
 
     def union(other : Caret) : Caret
