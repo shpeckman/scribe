@@ -70,6 +70,44 @@ module Scribe
       end
     end
 
+    def units(unit : Units, from : Int32 = 0, to : Int32 = size) : Int32
+      from = from.clamp(0, size)
+      to   = to.clamp(from, size)
+      return to - from if unit.clusters?
+      return @marks[to] - @marks[from] if unit.bytes?
+
+      total  = 0
+      reader = Char::Reader.new(@text, @marks[from])
+      stop   = @marks[to]
+      while reader.pos < stop
+        total += unit.width(reader.current_char)
+        reader.next_char
+      end
+      total
+    end
+
+    def column_for(amount : Int32, unit : Units) : Int32
+      return amount.clamp(0, size) if unit.clusters?
+      return column_at(amount.clamp(0, bytesize)) if unit.bytes?
+
+      total  = 0
+      column = 0
+      reader = Char::Reader.new(@text)
+      while column < size
+        stop  = @marks.unsafe_fetch(column + 1)
+        width = 0
+        while reader.pos < stop
+          width += unit.width(reader.current_char)
+          reader.next_char
+        end
+        break if total + width > amount
+
+        total  += width
+        column += 1
+      end
+      column
+    end
+
     def starts_with?(prefix : String, column : Int32 = 0) : Bool
       start = byte_at(column)
       return false if start + prefix.bytesize > bytesize

@@ -6,6 +6,24 @@ module Scribe
 
   record Edit, range : Range(Int32, Int32), text : String
 
+  record Point, line : Int32, column : Int32
+
+  enum Units
+    Bytes
+    Utf16
+    CodePoints
+    Clusters
+
+    def width(char : Char) : Int32
+      case self
+      in Bytes      then char.bytesize
+      in Utf16      then char.ord > 0xFFFF ? 2 : 1
+      in CodePoints then 1
+      in Clusters   then 1
+      end
+    end
+  end
+
   enum Gravity
     Left
     Right

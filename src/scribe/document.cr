@@ -13,6 +13,7 @@ module Scribe
     getter max_length  : Int32?
     getter box         : Box?
     getter marks       : Array(Mark)
+    getter decorations : Array(Decoration)
 
     property filter          : Filter
     property clipboard       : Clipboard
@@ -61,6 +62,7 @@ module Scribe
       @history       = History.new(@graphemes)
       @box           = nil
       @marks         = [] of Mark
+      @decorations   = [] of Decoration
       @dragging      = false
       @listeners     = [] of Listener
       @depth         = 0
@@ -168,6 +170,24 @@ module Scribe
 
     def unmark(mark : Mark) : Nil
       @marks.delete(mark)
+    end
+
+    def decorate(source : String, entries : Array(Decoration)) : Nil
+      @decorations.reject!(&.source.==(source))
+      entries.each do |entry|
+        entry.source = source
+        @decorations << entry
+      end
+      @decorations.sort_by!(&.start)
+      @listeners.dup.each(&.decorated(self))
+    end
+
+    def decorations(from : Int32, to : Int32) : Array(Decoration)
+      @decorations.select(&.overlaps?(from, to))
+    end
+
+    def decorations_at(offset : Int32) : Array(Decoration)
+      @decorations.select(&.covers?(offset))
     end
 
     def transaction(& : -> T) : T forall T
@@ -403,6 +423,7 @@ module Scribe
 
     private def applied(change : Change) : Nil
       @marks.each(&.follow(change))
+      @decorations.each(&.follow(change))
       @listeners.dup.each(&.applied(self, change))
     end
 
