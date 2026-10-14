@@ -33,6 +33,13 @@ module Scribe
       @document.detach(self)
     end
 
+    protected def rebind(buffer : Buffer) : Nil
+      @buffer = buffer
+      @layout = LineLayout.new(buffer, @folds) if @layout.is_a?(LineLayout)
+      @carets  = [Caret.at(0)]
+      @primary = 0
+    end
+
     def length : Int32
       @buffer.size
     end

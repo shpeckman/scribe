@@ -12,10 +12,8 @@ module Scribe
     getter revision  : Int32
 
     @lines     : Array(Line)
-    @sizes     : Array(Int32)
-    @tree      : Array(Int32)
-    @weights   : Array(Int32)
-    @index     : Array(Int32)
+    @rows      : Index
+    @bytes     : Index
     @bytesize  : Int32
     @text      : String?
     @journal   : Deque(Entry)
@@ -23,22 +21,54 @@ module Scribe
 
     def initialize(@graphemes : Graphemes, text : String = "")
       @lines     = Buffer.split(text).map { |part| Line.new(part, @graphemes) }
-      @sizes     = @lines.map(&.size)
-      @tree      = [] of Int32
-      @weights   = @lines.map(&.bytesize)
-      @index     = [] of Int32
-      @size      = 0
-      @bytesize  = @weights.sum + @weights.size - 1
+      @rows      = Index.new(@lines.map { |line| line.size + 1 })
+      @bytes     = Index.new(@lines.map { |line| line.bytesize + 1 })
+      @size      = @rows.total - 1
+      @bytesize  = @bytes.total - 1
       @revision  = 0
       @text      = nil
       @journal   = Deque(Entry).new
       @listeners = [] of Proc(Change, Nil)
-      @size      = @sizes.sum + @sizes.size - 1
-      rebuild
     end
 
     def self.split(text : String) : Array(String)
       text.empty? ? [""] : text.split('\n')
+    end
+
+    def self.split(bytes : Bytes) : Array(String)
+      return [""] if bytes.empty?
+
+      found = [] of String
+      start = 0
+      index = 0
+      while index < bytes.size
+        if bytes.unsafe_fetch(index) == 0x0a
+          found << String.new(bytes[start, index - start])
+          start = index + 1
+        end
+        index += 1
+      end
+      found << String.new(bytes[start, bytes.size - start])
+      found
+    end
+
+    def self.map(graphemes : Graphemes, path : String) : Buffer
+      Mapped.open(path) do |mapped|
+        mapped.sequential
+        new(graphemes, Buffer.split(mapped.bytes).map { |part| Line.new(part, graphemes) })
+      end
+    end
+
+    def initialize(@graphemes : Graphemes, lines : Array(Line))
+      @lines     = lines.empty? ? [Line.new("", nil)] : lines
+      @rows      = Index.new(@lines.map { |line| line.size + 1 })
+      @bytes     = Index.new(@lines.map { |line| line.bytesize + 1 })
+      @size      = @rows.total - 1
+      @bytesize  = @bytes.total - 1
+      @revision  = 0
+      @text      = nil
+      @journal   = Deque(Entry).new
+      @listeners = [] of Proc(Change, Nil)
     end
 
     def on_change(&block : Change -> Nil) : Proc(Nil)
@@ -59,23 +89,25 @@ module Scribe
     end
 
     def line_start(index : Int32) : Int32
-      prefix(@tree, index)
+      @rows.prefix(index.clamp(0, @lines.size))
     end
 
     def line_byte(index : Int32) : Int32
-      prefix(@index, index)
+      @bytes.prefix(index.clamp(0, @lines.size))
     end
 
     def line_end(index : Int32) : Int32
-      line_start(index) + @sizes[index]
+      line_start(index) + @lines[index].size
     end
 
     def position(offset : Int32) : Position
-      descend(@tree, offset.clamp(0, @size))
+      line, column = @rows.locate(offset.clamp(0, @size))
+      Position.new(line, column)
     end
 
     def byte_position(byte : Int32) : Position
-      descend(@index, byte.clamp(0, @bytesize))
+      line, column = @bytes.locate(byte.clamp(0, @bytesize))
+      Position.new(line, column)
     end
 
     def offset(line : Int32, column : Int32) : Int32
@@ -336,7 +368,7 @@ module Scribe
       start     = line_start(head.line) + lead
       removed   = slice_text(start...(start + old_total - lead - trail))
 
-      old_bytes = (head.line..tail.line).sum { |index| @weights[index] } + (tail.line - head.line)
+      old_bytes = (head.line..tail.line).sum { |index| @lines[index].bytesize } + (tail.line - head.line)
       replace_lines(head.line, tail.line, fresh)
       @size     += new_total - old_total
       @bytesize += fresh.sum(&.bytesize) + (fresh.size - 1) - old_bytes
@@ -377,78 +409,15 @@ module Scribe
     private def replace_lines(first : Int32, last : Int32, fresh : Array(Line)) : Nil
       if fresh.size == last - first + 1
         fresh.each_with_index do |line, index|
-          at    = first + index
-          delta = line.size - @sizes[at]
-          bytes = line.bytesize - @weights[at]
-          @lines[at]   = line
-          @sizes[at]   = line.size
-          @weights[at] = line.bytesize
-          adjust(@tree, at, delta) unless delta == 0
-          adjust(@index, at, bytes) unless bytes == 0
+          at         = first + index
+          @lines[at] = line
+          @rows.set(at, line.size + 1)
+          @bytes.set(at, line.bytesize + 1)
         end
       else
-        @lines[first..last]   = fresh
-        @sizes[first..last]   = fresh.map(&.size)
-        @weights[first..last] = fresh.map(&.bytesize)
-        rebuild
-      end
-    end
-
-    private def prefix(tree : Array(Int32), index : Int32) : Int32
-      total = 0
-      node  = index.clamp(0, @lines.size)
-      while node > 0
-        total += tree.unsafe_fetch(node)
-        node  -= node & -node
-      end
-      total
-    end
-
-    private def descend(tree : Array(Int32), rest : Int32) : Position
-      count = @lines.size
-      node  = 0
-      step  = 1
-      while step <= count
-        step <<= 1
-      end
-      step >>= 1
-
-      while step > 0
-        next_node = node + step
-        if next_node <= count && tree.unsafe_fetch(next_node) <= rest
-          node  = next_node
-          rest -= tree.unsafe_fetch(next_node)
-        end
-        step >>= 1
-      end
-
-      Position.new(node, rest)
-    end
-
-    private def adjust(tree : Array(Int32), index : Int32, delta : Int32) : Nil
-      count = @lines.size
-      node  = index + 1
-      while node <= count
-        tree[node] += delta
-        node += node & -node
-      end
-    end
-
-    private def rebuild : Nil
-      fill(@tree, @sizes)
-      fill(@index, @weights)
-    end
-
-    private def fill(tree : Array(Int32), sizes : Array(Int32)) : Nil
-      count = sizes.size
-      tree.pop(tree.size - count - 1) if tree.size > count + 1
-      tree.fill(0)
-      (count + 1 - tree.size).times { tree << 0 }
-      sizes.each_with_index do |size, index|
-        node   = index + 1
-        tree[node] += size + 1
-        parent = node + (node & -node)
-        tree[parent] += tree[node] if parent <= count
+        @lines[first..last] = fresh
+        @rows.replace(first, last, fresh.map { |line| line.size + 1 })
+        @bytes.replace(first, last, fresh.map { |line| line.bytesize + 1 })
       end
     end
   end

@@ -233,7 +233,7 @@ The host plugs into a document through these modules. Each is small, and all but
 
 ## Buffer and changes
 
-`document.buffer` stores each line as one UTF-8 string with its cluster boundaries, and keeps line offsets in a Fenwick tree, so finding a line, its start, or the line of an offset takes logarithmic time. A line whose bytes are all ASCII keeps no boundary table at all — its columns are its byte offsets — so ordinary source code costs nothing per cluster; `line.ascii?` says which kind a line is. Searching is line by line and never builds the whole text.
+`document.buffer` stores each line as one UTF-8 string with its cluster boundaries, and keeps line offsets in a `Scribe::Index`: lines in blocks, with a Fenwick tree over the block sums. Finding a line, its start, or the line of an offset is logarithmic in the number of blocks plus a scan inside one, and inserting or removing a line costs the same instead of rebuilding the whole index. On a million-line document, 200 edits that each add a line take about 76 ms rather than 1.3 s. A line whose bytes are all ASCII keeps no boundary table at all — its columns are its byte offsets — so ordinary source code costs nothing per cluster; `line.ascii?` says which kind a line is. Searching is line by line and never builds the whole text.
 
 ```crystal
 buffer = text.buffer
@@ -359,6 +359,28 @@ text.replace_ranges(Scribe.diff(text.value, formatted, graphemes))
 ```
 
 The carets, marks, decorations and annotations outside the changed lines stay where they are, which is what `value=` cannot do. It is a Myers line diff with common ends trimmed; past `limit` lines of difference it falls back to one edit covering the changed region.
+
+## Opening a file
+
+`Document.open` maps the file instead of reading it into one string, finds the lines in the mapped bytes and builds the buffer from them. The caret starts at the beginning.
+
+```crystal
+text = Scribe::Document.open(graphemes, "src/app.cr", filter: Scribe::MultiLine.new)
+text.value
+text.line_ending          # taken from the file
+```
+
+`Scribe::Mapped` is the mapping itself, for a host that wants the bytes:
+
+```crystal
+Scribe::Mapped.open(path) do |mapped|
+  mapped.bytesize
+  mapped.bytes            # a read-only Bytes view; invalid once closed
+  mapped.sequential       # tells the kernel the reads will be sequential
+end
+```
+
+It needs a POSIX system and refuses a file larger than `Int32::MAX`. What this saves is the whole-file string and the array `String#split` builds; each line is still its own string, so the resident cost is unchanged. Opening a 11.6 MB file takes about half as long as reading it.
 
 ## Revisions
 

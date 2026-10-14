@@ -52,6 +52,13 @@ module Scribe
       singles > feeds ? CR : LF
     end
 
+    def self.detect_in(buffer : Buffer) : LineEnding
+      return LineEnding::LF if buffer.line_count < 2
+
+      first = buffer.line(0)
+      first.bytesize > 0 && first.text.ends_with?('\r') ? LineEnding::CRLF : LineEnding::LF
+    end
+
     def self.normalize(text : String) : String
       return text unless text.includes?('\r')
 

@@ -113,6 +113,20 @@ module Scribe
       end
     end
 
+    def self.open(graphemes : Graphemes, path : String, **options) : Document
+      buffer = Buffer.map(graphemes, path)
+      found  = new(graphemes, "", **options)
+      found.adopt(buffer, LineEnding.detect_in(buffer))
+      found
+    end
+
+    protected def adopt(buffer : Buffer, ending : LineEnding) : Nil
+      @buffer      = buffer
+      @line_ending = ending
+      views.each(&.rebind(buffer))
+      buffer.on_change { |change| applied(change) }
+    end
+
     def listen(listener : Listener) : Proc(Nil)
       @listeners << listener
       -> { @listeners.delete(listener); nil }

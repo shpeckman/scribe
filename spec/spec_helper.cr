@@ -1,5 +1,6 @@
 # spec/spec_helper.cr
 require "spec"
+require "file_utils"
 require "../src/scribe"
 
 struct Plain
