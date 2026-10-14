@@ -1,0 +1,14 @@
+# shard.yml
+name: scribe
+version: 0.1.0
+
+authors:
+  - shpeckman
+
+description: |
+  A multi-caret text editing model for Crystal: a grapheme buffer, undo history, search, highlighting and
+  editing commands, driven through interfaces the host implements.
+
+crystal: ">= 1.21.0"
+
+license: MIT
