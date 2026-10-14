@@ -2,7 +2,7 @@
 
 A multi-caret text editing model for Crystal.
 
-scribe holds the text, the carets and the undo history, and carries out editing commands: typing, deleting, word and line motion, multiple carets, box selection, clipboard, line operations, comments, auto-closing brackets, find and replace, and syntax highlighting. It draws nothing and reads no input. The host — a terminal UI, a GUI, a test — implements a few small interfaces, sends commands, and listens for changes.
+scribe holds the text, the carets and the undo history, and carries out editing commands: typing, deleting, word and line motion, multiple carets, box selection, clipboard, line operations, comments, auto-closing brackets, and find and replace. It draws nothing, reads no input and highlights nothing: syntax tokens come from a host-supplied `TokenSource`, such as the one in [treesitter](https://github.com/shpeckman/treesitter.cr). The host — a terminal UI, a GUI, a test — implements a few small interfaces, sends commands, and listens for changes.
 
 It has no dependencies beyond the standard library.
 
@@ -190,7 +190,8 @@ The host plugs into a document through these modules. Each is small, and all but
 | `Clipboard` | `write(text)`, `read { \|text\| }` | `Register` (in memory) |
 | `Layout` | `row_count`, `row_of`, `row_start`, `row_end`, `cell_of`, `offset_in`, `page_rows` | `LineLayout` (one row per line) |
 | `Listener` | `applied`, `edited`, `moved`, `decorated` | no-ops to override |
-| `TokenSource` | `tokens(buffer, line)` | `HighlightCache` |
+| `TokenSource` | `tokens(buffer, line)` | none |
+| `Tokenizer` | `tokens(text)` | none |
 
 **Graphemes.** `boundaries` returns the byte offset where each cluster starts, followed by the string's byte size, so `""` gives `[0]` and `"ab"` gives `[0, 1, 2]`. `kind` returns a `ClusterKind` (`Space`, `Word`, `Punct` or `Other`), which drives word motion and deletion, word selection, smart Home, auto-indent and how typing is grouped for undo. `width` is the display width in columns. Clusters are passed as byte slices into the document's own storage, so a host can classify and measure them without allocating. Give the document the same measurements your renderer uses.
 
@@ -207,7 +208,9 @@ The host plugs into a document through these modules. Each is small, and all but
 - `moved(document)` runs whenever the carets change, including after every edit.
 - `decorated(document)` runs when a source replaces its decorations.
 
-**TokenSource.** Anything that can return the highlight tokens of a line — `HighlightCache`, or a syntax tree from another shard (such as `treesitter`) — includes `TokenSource`, so a renderer can take either.
+**TokenSource.** Anything that can return the tokens of a line in a buffer includes `TokenSource`, so a renderer takes a source without knowing what produced it. `TreeSitter::Syntax` is one. A `Token` is a `start`, a `count` and a `kind`, with columns counting clusters, and `TokenSource::NO_TOKENS` is the shared empty result.
+
+**Tokenizer.** Anything that can tokenize standalone text, with no document behind it, includes `Tokenizer`: `tokens(text)` returns one array of `Token` per line. This is what a renderer needs for a fenced code block or any other snippet it holds as a string. `TreeSitter::Tokenizer` is one.
 
 ## Buffer and changes
 
@@ -286,18 +289,29 @@ text.replace_all(search, "$2=$1")                   # one undo step; returns the
 search.error                                        # the message for an invalid pattern
 ```
 
-## Highlighting
+## Tokens
 
-A `Highlighter` turns one `Line` and a carried-over state into tokens whose columns count clusters. `KeywordHighlighter` covers keywords, capitalised types, numbers, strings (optionally spanning lines) and line comments:
+scribe defines the token vocabulary and the two interfaces that carry it; it produces no tokens itself.
 
 ```crystal
-marker = Scribe::KeywordHighlighter.new(%w(def end if), comment: "#", suffixes: "?!", multiline_strings: true)
-cache  = Scribe::HighlightCache.new(marker)
-text.listen(cache)
-cache.tokens(text.buffer, 3)   # Array(Scribe::Highlighter::Token): start, count, kind
+Scribe::Token.new(0, 3, "keyword")   # start, count, kind — columns count clusters
 ```
 
-`HighlightCache` highlights lines on demand and forgets only the lines an edit touches. To highlight text outside a document, build a line with `Scribe::Line.new(text, graphemes)`. `text.brackets` returns the offsets of the bracket pair beside an empty primary caret.
+A `TokenSource` serves one line of a buffer and is what a renderer reads through:
+
+```crystal
+syntax = TreeSitter::Syntax.for(text, "src/app.cr")   # includes Scribe::TokenSource
+syntax.tokens(text.buffer, 3)                          # => Array(Scribe::Token)
+```
+
+A `Tokenizer` serves standalone text, one array of tokens per line, for a snippet with no document behind it:
+
+```crystal
+marker = TreeSitter.language("crystal").tokenizer(graphemes)   # includes Scribe::Tokenizer
+marker.tokens("def f\nend")                                    # => [[Token], [Token]]
+```
+
+To examine text outside a document, build a line with `Scribe::Line.new(text, graphemes)`. `text.brackets` returns the offsets of the bracket pair beside an empty primary caret.
 
 ## Input recall
 

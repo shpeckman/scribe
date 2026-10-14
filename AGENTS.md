@@ -4,7 +4,7 @@ Orientation for AI agents working on this repository.
 
 ## What this is
 
-`scribe` is a Crystal shard holding a multi-caret text editing model: a grapheme-cluster buffer, carets, undo history, search, highlighting, marks and a set of editing commands. It draws nothing and reads no input. Hosts (for example the `tui` shard) plug in through interfaces and drive it with `Scribe::Command` values. It has no dependencies beyond the standard library, and must stay that way.
+`scribe` is a Crystal shard holding a multi-caret text editing model: a grapheme-cluster buffer, carets, undo history, search, marks and a set of editing commands. It produces no syntax tokens of its own: it defines the `Token` value and the `TokenSource`/`Tokenizer` interfaces, and a host plugs in a producer such as `TreeSitter::Syntax`. It draws nothing and reads no input. Hosts (for example the `tui` shard) plug in through interfaces and drive it with `Scribe::Command` values. It has no dependencies beyond the standard library, and must stay that way.
 
 ## Layout
 
@@ -16,7 +16,7 @@ Orientation for AI agents working on this repository.
 - `src/scribe/decoration.cr` — `Decoration`: a kind and message over a range held by two marks; `Document#decorate` replaces them per source.
 - `src/scribe/history.cr` — undo and redo steps, typing and deleting grouped within a time window, a save point, and an injectable clock.
 - `src/scribe/search.cr` — regex and literal search; literal searches are kept per line and updated from the buffer's journal.
-- `src/scribe/highlighter.cr`, `token_source.cr`, `highlight_cache.cr` — line tokenizers, the `TokenSource` interface renderers read tokens through, and a per-line token cache that listens to a document and implements it.
+- `src/scribe/token.cr`, `token_source.cr` — the `Token` value (start, count, kind; columns count clusters), and the two interfaces that carry it: `TokenSource` (`tokens(buffer, line)`, for a document) and `Tokenizer` (`tokens(text)`, for standalone text). Neither has an implementation here.
 - `src/scribe/recall.cr` — input history for single-line fields.
 - `src/scribe/command.cr` — the `Command` enum and `edits?`.
 - `src/scribe/document.cr` — `Document`'s core: options, value and line endings, marks, transactions, `run` dispatch, and the internal edit planner (`apply`, `replace_ranges`, `seat`, `record`, `changed`).
@@ -32,7 +32,7 @@ Orientation for AI agents working on this repository.
   - `clipboard.cr` — `Clipboard`, `Register`.
   - `layout.cr` — `Layout`, `LineLayout`.
   - `listener.cr` — `Listener` with no-op hooks.
-  - `token_source.cr` — `TokenSource`; implemented by `HighlightCache` here and by `TreeSitter::Syntax` in the `treesitter` shard.
+  - `token_source.cr` — `TokenSource` and `Tokenizer`; implemented outside this shard, by `TreeSitter::Syntax` and `TreeSitter::Tokenizer`.
 - `spec/` — one file per area. `spec/spec_helper.cr` defines a standard-library `Graphemes` (`Plain`), a deferred clipboard, a recording listener, and the `buffer`, `line`, `document`, `lines`, `code` and `change` helpers.
 
 ## Commands
@@ -48,7 +48,7 @@ Orientation for AI agents working on this repository.
 - Both Fenwick trees change together in `replace_lines`; any new per-line weight goes through the same helpers rather than a new copy of the tree code.
 - Positions for other tools go through `Units`, `Buffer#point`/`offset_at` and `Change#start_point`/`old_end_point`/`new_end_point`; never count bytes or UTF-16 units by hand elsewhere.
 - `Buffer#replace` widens a change to whole clusters when an edit merges with a neighbour. Never assume `inserted_size` equals the cluster count of the text passed in; place carets from the returned `Change`.
-- All grapheme, width, clipboard, layout and input-filtering knowledge comes through the interfaces. Never add a dependency on a terminal or width library.
+- All grapheme, width, clipboard, layout, tokenizing and input-filtering knowledge comes through the interfaces. Never add a dependency on a terminal or width library, and never add a tokenizer, highlighter or language table here: `Token`, `TokenSource` and `Tokenizer` are the whole surface, and producers live in their own shards.
 - New editing behaviour is a `Command` member handled in `Document#run` (and listed in `Command#edits?` when it changes text), plus specs in `spec/document_spec.cr` and a line in the README's command notes.
 - `run` returns whether the command applied; keep the README's list of which commands can return `false` accurate.
 - Listener order is fixed: `applied` for each change as it lands, then `moved` once the carets are placed, then `edited` with the whole batch. Inside a transaction, `moved` and `edited` are held until it ends.
