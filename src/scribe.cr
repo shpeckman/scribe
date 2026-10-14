@@ -1,6 +1,8 @@
 # src/scribe.cr
 require "./scribe/values"
 require "./scribe/graphemes"
+require "./scribe/mapped"
+require "./scribe/index"
 require "./scribe/line"
 require "./scribe/caret"
 require "./scribe/change"
