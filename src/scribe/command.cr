@@ -51,6 +51,7 @@ module Scribe
     MoveLinesUp
     MoveLinesDown
     DuplicateLines
+    DuplicateSelection
     DeleteLines
     SortLines
     ReverseLines

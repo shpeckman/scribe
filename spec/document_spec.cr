@@ -309,6 +309,75 @@ describe Scribe::Document do
       text.selected_texts.should eq(["bc", "fg"])
       text.primary.should eq(1)
     end
+
+    it "selects inside and around the innermost bracket pair" do
+      text = document("(a[b]c) {d}")
+      text.move(3)
+      text.run(Scribe::Command::SelectInsideBrackets).should be_true
+      text.selected_text.should eq("b")
+      text.run(Scribe::Command::SelectAroundBrackets).should be_true
+      text.selected_text.should eq("[b]")
+      text.move(1)
+      text.run(Scribe::Command::SelectInsideBrackets)
+      text.selected_text.should eq("a[b]c")
+      text.run(Scribe::Command::SelectAroundBrackets)
+      text.selected_text.should eq("(a[b]c)")
+      document("plain").run(Scribe::Command::SelectInsideBrackets).should be_false
+    end
+
+    it "selects bracket objects at every caret" do
+      text = document("(one) [two]")
+      text.place_carets([Scribe::Caret.at(2), Scribe::Caret.at(8)])
+      text.run(Scribe::Command::SelectInsideBrackets).should be_true
+      text.selected_texts.should eq(["one", "two"])
+    end
+
+    it "selects quote objects and skips escaped quotes" do
+      text = document("one \"a\\\"b\" 'two'")
+      text.move(8)
+      text.run(Scribe::Command::SelectInsideQuotes).should be_true
+      text.selected_text.should eq("a\\\"b")
+      text.run(Scribe::Command::SelectAroundQuotes).should be_true
+      text.selected_text.should eq("\"a\\\"b\"")
+      text.move(13)
+      text.run(Scribe::Command::SelectInsideQuotes)
+      text.selected_text.should eq("two")
+      document("\"open").run(Scribe::Command::SelectInsideQuotes).should be_false
+    end
+  end
+
+  describe "duplicate selection" do
+    it "duplicates and selects the copy as one undo step" do
+      text = lines("one\ntwo")
+      text.select_range(0, 3)
+      text.run(Scribe::Command::DuplicateSelection).should be_true
+      text.value.should eq("oneone\ntwo")
+      text.selection.should eq(3...6)
+      text.undo
+      text.value.should eq("one\ntwo")
+      text.redo
+      text.selection.should eq(3...6)
+    end
+
+    it "preserves backward selections and duplicates at every caret" do
+      text = document("ab cd ef")
+      text.place_carets([Scribe::Caret.new(2, 0), Scribe::Caret.new(6, 8)])
+      text.run(Scribe::Command::DuplicateSelection)
+      text.value.should eq("ab ab cdefef")
+      text.carets.should eq([Scribe::Caret.new(4, 2), Scribe::Caret.new(10, 12)])
+      document("ab").run(Scribe::Command::DuplicateSelection).should be_false
+    end
+
+    it "honours read-only and max_length" do
+      fixed = document("ab", read_only: true)
+      fixed.select_all
+      fixed.run(Scribe::Command::DuplicateSelection).should be_false
+      limited = document("ab", max_length: 3)
+      limited.select_all
+      limited.run(Scribe::Command::DuplicateSelection).should be_true
+      limited.value.should eq("aba")
+      limited.selection.should eq(2...3)
+    end
   end
 
   describe "history" do

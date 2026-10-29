@@ -160,6 +160,7 @@ module Scribe
       in .move_lines_up?          then return move_lines(-1)
       in .move_lines_down?        then return move_lines(1)
       in .duplicate_lines?        then return duplicate_lines
+      in .duplicate_selection?    then return duplicate_selection
       in .delete_lines?           then return delete_lines
       in .sort_lines?             then return sort_lines
       in .reverse_lines?          then return reverse_lines
