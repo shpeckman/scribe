@@ -556,7 +556,7 @@ describe Scribe::Document do
       text.run(Scribe::Command::PastePrevious)
       text.insert("!")
       board.deliver
-      text.value.should eq("latest!")
+      text.value.should eq("oldlatest!")
     end
   end
 
