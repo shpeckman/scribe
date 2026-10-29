@@ -210,6 +210,7 @@ The host plugs into a document through these modules. Each is small, and all but
 | `Graphemes` | `boundaries(text)`, optional `boundaries(bytes)`, `kind(cluster : Bytes)`, `width(cluster : Bytes)` | byte boundaries fall back to a string copy |
 | `Filter` | `filter(text)` | `SingleLine`, `MultiLine(tab)` |
 | `Clipboard` | `write(text)`, `read { \|text\| }` | `Register` (in memory) |
+| `ClipboardHistory` | `size`, `read(index) { \|text\| }` | `Register` (100 entries) |
 | `Layout` | `row_count`, `row_of`, `row_start`, `row_end`, `cell_of`, `offset_in`, `page_rows` | `LineLayout` (one row per line) |
 | `Listener` | `applied`, `edited`, `moved`, `decorated` | no-ops to override |
 | `TokenSource` | `tokens(buffer, line)` | none |
@@ -219,7 +220,7 @@ The host plugs into a document through these modules. Each is small, and all but
 
 **Filters.** `SingleLine` turns line breaks and tabs into spaces and drops other control characters. `MultiLine.new(tab)` keeps line breaks and replaces tabs with `tab`. Any struct or class that includes `Filter` works, for example one that only lets digits through.
 
-**Clipboard.** `read` takes a block so a clipboard can answer later, for example after asking a terminal; the paste happens when the block is called.
+**Clipboard.** `read` takes a block so a clipboard can answer later, for example after asking a terminal; the paste happens when the block is called. `Register` also includes `ClipboardHistory`, keeping the newest 100 unique entries and exposing them through `entries`; `Register.new(limit: n)` changes that bound. Other clipboards can opt into `PastePrevious` by including `ClipboardHistory`.
 
 **Layout.** `cell_of(offset)` returns a `Cell` (`column`, `row`) in display columns, and `offset_in(row, column)` goes back. A host that wraps lines implements `Layout` over its wrapped rows and assigns it with `document.layout = …`; vertical motion, paging (`page_rows`), smart Home, carets above and below and box selection then follow the wrapped rows.
 
