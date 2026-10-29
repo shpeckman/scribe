@@ -110,11 +110,12 @@ module Scribe
     end
 
     private def compile : Nil
-      @buffer  = nil
-      @found   = NO_RANGES
-      @lines   = [] of Array(Range(Int32, Int32))?
-      @error   = nil
-      @pattern = nil
+      @buffer     = nil
+      @found      = NO_RANGES
+      @lines      = [] of Array(Range(Int32, Int32))?
+      @error      = nil
+      @pattern    = nil
+      @line_local = false
       return if @query.empty?
 
       source  = @regex ? @query : Regex.escape(@query)
@@ -122,8 +123,57 @@ module Scribe
       options = Regex::CompileOptions::MULTILINE_ONLY
       options |= Regex::CompileOptions::IGNORE_CASE unless @case_sensitive
       @pattern = Regex.new(source, options)
+      @line_local = @regex && local_source?(source)
     rescue error : ArgumentError
       @error = error.message
+    end
+
+    private def local_source?(source : String) : Bool
+      index = 0
+      while index < source.bytesize
+        byte = source.byte_at(index)
+        return false if byte == 0x0a || byte == 0x0d
+
+        case byte
+        when '\\'.ord
+          index += 1
+          return false if index >= source.bytesize || !local_escape?(source.byte_at(index))
+        when '['.ord
+          index = local_class(source, index + 1) || return false
+          next
+        when '('.ord
+          if source.byte_at(index + 1)? == '?'.ord
+            marker = source.byte_at(index + 2)?
+            return false if marker && "aiJmsUx-".includes?(marker.chr)
+          end
+        end
+        index += 1
+      end
+      true
+    end
+
+    private def local_class(source : String, index : Int32) : Int32?
+      return nil if source.byte_at(index)? == '^'.ord
+
+      while index < source.bytesize
+        byte = source.byte_at(index)
+        return nil if byte == 0x0a || byte == 0x0d || byte == '['.ord
+        return index + 1 if byte == ']'.ord
+
+        if byte == '\\'.ord
+          index += 1
+          return nil if index >= source.bytesize || !local_escape?(source.byte_at(index))
+        end
+        index += 1
+      end
+      nil
+    end
+
+    private def local_escape?(byte : UInt8) : Bool
+      char = byte.chr
+      return false if "nrsWDRNXCpPxuUov0".includes?(char)
+
+      !char.alphanumeric? || "AbBzZGKEQghkSVwdtfea123456789".includes?(char)
     end
 
     private def scan_lines(buffer : Buffer, pattern : Regex, journal : Array(Buffer::Entry)?) : Array(Range(Int32, Int32))
