@@ -10,20 +10,22 @@ module Scribe
     getter? regex          : Bool
     getter error           : String?
 
-    @pattern  : Regex?
-    @buffer   : Buffer?
-    @revision : Int32
-    @found    : Array(Range(Int32, Int32))
-    @lines    : Array(Array(Range(Int32, Int32))?)
+    @pattern    : Regex?
+    @buffer     : Buffer?
+    @revision   : Int32
+    @found      : Array(Range(Int32, Int32))
+    @lines      : Array(Array(Range(Int32, Int32))?)
+    @line_local : Bool
 
     def initialize(@query : String = "", *, @case_sensitive : Bool = false,
                    @whole_word : Bool = false, @regex : Bool = false)
-      @pattern  = nil
-      @error    = nil
-      @buffer   = nil
-      @revision = -1
-      @found    = NO_RANGES
-      @lines    = [] of Array(Range(Int32, Int32))?
+      @pattern    = nil
+      @error      = nil
+      @buffer     = nil
+      @revision   = -1
+      @found      = NO_RANGES
+      @lines      = [] of Array(Range(Int32, Int32))?
+      @line_local = false
       compile
     end
 
