@@ -21,23 +21,23 @@ Orientation for AI agents working on this repository.
 - `src/scribe/diff.cr` — `Diff.hunks` (a Myers line diff with common ends trimmed and a fallback past `limit`) and `Scribe.diff`, which turns two texts into `Edit`s in the old text's cluster offsets.
 - `src/scribe/macro_log.cr` — `MacroLog`: records the commands and text a view receives and replays them; a replay records nothing itself.
 - `src/scribe/history.cr` — undo and redo steps, typing and deleting grouped within a time window, a save point, and an injectable clock.
-- `src/scribe/search.cr` — regex and literal search; literal searches are kept per line and updated from the buffer's journal.
+- `src/scribe/search.cr` — regex and literal search; literals and regexes conservatively proved line-local are kept per line and updated from the buffer's journal. Multiline-capable or uncertain regexes rescan the whole text.
 - `src/scribe/token.cr`, `token_source.cr` — the `Token` value (start, count, kind; columns count clusters), and the two interfaces that carry it: `TokenSource` (`tokens(buffer, line)`, for a document) and `Tokenizer` (`tokens(text)`, for standalone text). Neither has an implementation here.
 - `src/scribe/recall.cr` — input history for single-line fields.
 - `src/scribe/command.cr` — the `Command` enum and `edits?`.
 - `src/scribe/document.cr` — `Document`: the text, options, path, line endings, history, marks, decorations, annotations, transactions, revision mapping (`map`), atomic writable-mmap `save`, and the edit planner views go through (`apply`, `replace_ranges`, `record`, `changed`). It holds a lazily built primary `View` and delegates the whole caret and editing API to it.
-- `src/scribe/view.cr` — `View`: carets, primary index, box, layout, folds, the macro log, `run` dispatch, `seat` (which places carets and tells listeners) and `follow` (which carries this view's carets through a change another view made).
+- `src/scribe/view.cr` — `View`: carets, primary index, box, layout, folds, the macro log, paste-cycle state, `run` dispatch, `seat` (which places carets and tells listeners) and `follow` (which carries this view's carets through a change another view made).
 - `src/scribe/view/` — the rest of `View`, split by concern by reopening the class:
   - `carets.cr` — motion, goal column, selection, occurrences, box.
-  - `editing.cr` — `insert`, `paste`, `insert_snippet`, auto-closing, deleting, new line, tab.
+  - `editing.cr` — `insert`, `paste`, paste cycling, duplicate selection, `insert_snippet`, auto-closing, deleting, new line, tab.
   - `lines.cr` — indent, outdent, comments, moving, duplicating and deleting lines.
   - `transforms.cr` — sort, reverse, unique, join, trim, case, surround, carets per line and per match, subword edges.
   - `clipboard.cr` — copy, cut, paste, auto-copy.
-  - `finder.cr` — find, replace, bracket matching.
+  - `finder.cr` — find, replace, bracket matching, bracket and quote text objects.
 - Interfaces the host implements, each with its defaults:
   - `graphemes.cr` — `Graphemes` and `ClusterKind`; string boundaries are abstract, and byte boundaries default to one temporary string copy.
   - `filter.cr` — `Filter`, `SingleLine`, `MultiLine`.
-  - `clipboard.cr` — `Clipboard`, `Register`.
+  - `clipboard.cr` — `Clipboard`, optional `ClipboardHistory`, and the bounded in-memory `Register`.
   - `layout.cr` — `Layout`, `LineLayout`.
   - `listener.cr` — `Listener` with no-op hooks.
   - `token_source.cr` — `TokenSource` and `Tokenizer`; implemented outside this shard, by `TreeSitter::Syntax` and `TreeSitter::Tokenizer`.
