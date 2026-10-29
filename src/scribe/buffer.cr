@@ -200,7 +200,7 @@ module Scribe
       @text ||= String.build do |io|
         @lines.each_with_index do |line, index|
           io << BREAK if index > 0
-          io.write(line.to_slice)
+          line.each_chunk { |piece, _start| io.write(piece) }
         end
       end
     end
@@ -217,14 +217,14 @@ module Scribe
       String.build do |io|
         row   = @lines[first.line]
         start = row.byte_at(first.column)
-        io.write(row.to_slice[start, row.bytesize - start])
+        row.each_chunk(start, row.bytesize) { |piece, _at| io.write(piece) }
         (first.line + 1...last.line).each do |index|
           io << BREAK
-          io.write(@lines[index].to_slice)
+          @lines[index].each_chunk { |piece, _at| io.write(piece) }
         end
         row = @lines[last.line]
         io << BREAK
-        io.write(row.to_slice[0, row.byte_at(last.column)])
+        row.each_chunk(0, row.byte_at(last.column)) { |piece, _at| io.write(piece) }
       end
     end
 
@@ -247,18 +247,21 @@ module Scribe
       head = byte_position(from)
       tail = byte_position(to)
       if head.line == tail.line
-        return String.new(@lines[head.line].to_slice[head.column, tail.column - head.column])
+        row = @lines[head.line]
+        return String.build(tail.column - head.column) do |io|
+          row.each_chunk(head.column, tail.column) { |piece, _start| io.write(piece) }
+        end
       end
 
       String.build do |io|
         first = @lines[head.line]
-        io.write(first.to_slice[head.column, first.bytesize - head.column])
+        first.each_chunk(head.column, first.bytesize) { |piece, _start| io.write(piece) }
         (head.line + 1...tail.line).each do |index|
           io << BREAK
-          io.write(@lines[index].to_slice)
+          @lines[index].each_chunk { |piece, _start| io.write(piece) }
         end
         io << BREAK
-        io.write(@lines[tail.line].to_slice[0, tail.column])
+        @lines[tail.line].each_chunk(0, tail.column) { |piece, _start| io.write(piece) }
       end
     end
 
@@ -270,6 +273,18 @@ module Scribe
       return BREAK.to_slice if found.column >= row.bytesize
 
       row.to_slice[found.column, row.bytesize - found.column]
+    end
+
+    def each_chunk(byte : Int32, & : Bytes -> Nil) : Nil
+      return unless 0 <= byte < @bytesize
+
+      found = byte_position(byte)
+      row   = @lines[found.line]
+      if found.column >= row.bytesize
+        yield BREAK.to_slice
+      else
+        row.each_chunk(found.column, row.bytesize) { |piece, _start| yield piece }
+      end
     end
 
     def find(needle : String, from : Int32 = 0) : Range(Int32, Int32)?
@@ -331,7 +346,7 @@ module Scribe
       byte  = row.byte_at(from)
       limit = row.bytesize - needle.bytesize
       while byte <= limit
-        head = byte_index(row.to_slice, needle.to_slice, byte) || return nil
+        head = byte_index(row, needle.to_slice, byte) || return nil
         return nil if head > limit
 
         start = row.column_at(head)
@@ -339,6 +354,39 @@ module Scribe
         return {start, stop - start} if row.boundary(start) == head && row.boundary(stop) == head + needle.bytesize
 
         byte = head + 1
+      end
+      nil
+    end
+
+    private def byte_index(row : Line, needle : Bytes, from : Int32) : Int32?
+      return byte_index(row.to_slice, needle, from) unless row.chunked?
+
+      table = Array(Int32).new(needle.size, 0)
+      length = 0
+      index = 1
+      while index < needle.size
+        if needle[index] == needle[length]
+          length += 1
+          table[index] = length
+          index += 1
+        elsif length > 0
+          length = table[length - 1]
+        else
+          index += 1
+        end
+      end
+
+      matched = 0
+      row.each_chunk(from, row.bytesize) do |piece, start|
+        piece.each_with_index do |byte, at|
+          while matched > 0 && byte != needle[matched]
+            matched = table[matched - 1]
+          end
+          matched += 1 if byte == needle[matched]
+          if matched == needle.size
+            return start + at - needle.size + 1
+          end
+        end
       end
       nil
     end
@@ -361,7 +409,9 @@ module Scribe
       return nil if part.bytesize > row.bytesize
 
       head = row.bytesize - part.bytesize
-      return nil unless row.to_slice[head, part.bytesize] == part.to_slice
+      part.to_slice.each_with_index do |byte, index|
+        return nil unless row.byte(head + index) == byte
+      end
 
       start = row.column_at(head)
       return nil unless row.boundary(start) == head && start >= from
@@ -378,7 +428,10 @@ module Scribe
     end
 
     private def spans?(parts : Array(String), row : Int32) : Bool
-      (1...parts.size - 1).all? { |index| @lines[row + index].to_slice == parts[index].to_slice }
+      (1...parts.size - 1).all? do |index|
+        line = @lines[row + index]
+        line.bytesize == parts[index].bytesize && line.starts_with?(parts[index])
+      end
     end
 
     def journal_since(revision : Int32) : Array(Entry)?
@@ -404,15 +457,22 @@ module Scribe
 
       head_byte = first.byte_at(head.column)
       tail_byte = last.byte_at(tail.column)
-      combined  = String.build(head_byte + text.bytesize + last.bytesize - tail_byte) do |io|
-        io.write(first.to_slice[0, head_byte])
-        io << text
-        io.write(last.to_slice[tail_byte, last.bytesize - tail_byte])
-      end
-      fresh = Buffer.split(combined).map { |part| Line.new(part, @graphemes) }
+      parts     = Buffer.split(text)
+      fresh     = if parts.size == 1
+                    [Line.splice(first, head_byte, last, tail_byte, text, @graphemes)]
+                  else
+                    lines = [Line.splice(first, head_byte, first, first.bytesize, parts.first, @graphemes)]
+                    parts[1...-1].each { |part| lines << Line.new(part, @graphemes) }
+                    lines << Line.splice(last, 0, last, tail_byte, parts.last, @graphemes)
+                  end
 
-      lead  = common_lead(first, fresh.first, head_byte)
-      trail = common_trail(last, fresh.last, tail_byte, lead, head.line == tail.line, fresh.size == 1)
+      if first.ascii? && last.ascii? && text.ascii_only?
+        lead  = head.column
+        trail = last.size - tail.column
+      else
+        lead  = common_lead(first, fresh.first, head_byte)
+        trail = common_trail(last, fresh.last, tail_byte, lead, head.line == tail.line, fresh.size == 1)
+      end
 
       old_total = (head.line..tail.line).sum { |index| @lines[index].size } + (tail.line - head.line)
       new_total = fresh.sum(&.size) + (fresh.size - 1)

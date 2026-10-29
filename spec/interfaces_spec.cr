@@ -84,6 +84,21 @@ describe Scribe::Register do
     register.read { |text| found = text; nil }
     found.should eq("hey")
   end
+
+  it "keeps bounded unique history with indexed reads" do
+    register = Scribe::Register.new(limit: 2)
+    register.write("one")
+    register.write("two")
+    register.write("one")
+    register.write("three")
+    register.entries.should eq(["three", "one"])
+    register.size.should eq(2)
+    found = nil.as(String?)
+    register.read(1) { |text| found = text; nil }
+    found.should eq("one")
+    register.read(2) { |text| found = text; nil }
+    found.should be_nil
+  end
 end
 
 describe Scribe::LineLayout do

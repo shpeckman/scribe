@@ -156,6 +156,58 @@ describe Scribe::Line do
     row.each_cluster(1, 3) { |_bytes, column| seen << column }
     seen.should eq([1, 2])
   end
+
+  it "keeps cluster and byte mappings across forced chunks" do
+    source = "aé👍🏽bcdef"
+    row    = Scribe::Line.new(source, GRAPHEMES, 4)
+    plain  = line(source)
+    row.chunked?.should be_true
+    row.size.should eq(plain.size)
+    row.bytesize.should eq(plain.bytesize)
+    row.clusters.should eq(plain.clusters)
+    row.@text.should be_nil
+
+    (0..row.size).each do |column|
+      row.byte_at(column).should eq(plain.byte_at(column))
+      row.column_at(row.byte_at(column)).should eq(column)
+    end
+    {Scribe::Units::Utf16, Scribe::Units::CodePoints}.each do |unit|
+      row.units(unit).should eq(plain.units(unit))
+      row.column_for(2, unit).should eq(plain.column_for(2, unit))
+    end
+    row.slice(1, 5).should eq(plain.slice(1, 5))
+    row.to_slice.should eq(source.to_slice)
+  end
+
+  it "splices and searches long ASCII lines without flattening them" do
+    row  = Scribe::Line.new("abcdefgh", GRAPHEMES, 4)
+    text = Scribe::Buffer.new(GRAPHEMES, [row])
+    text.replace(4...4, "XY")
+    text.slice_text(0...text.size).should eq("abcdXYefgh")
+    text.line(0).chunked?.should be_true
+    text.line(0).@text.should be_nil
+    text.find("dXYe").should eq(3...7)
+    text.find_all("ef").should eq([6...8])
+    text.byte_text(2, 8).should eq("cdXYef")
+    text.line(0).@text.should be_nil
+
+    text.replace(2...6, "Q\nR")
+    text.text.should eq("abQ\nRefgh")
+    text.line_count.should eq(2)
+  end
+
+  it "matches ordinary lines through chunked Unicode edits" do
+    source = "aé👍🏽bcdef"
+    chunked = Scribe::Buffer.new(GRAPHEMES, [Scribe::Line.new(source, GRAPHEMES, 4)])
+    plain   = buffer(source)
+    [{2...2, "Z"}, {1...3, "é"}, {0...0, "a"}, {5...6, "\n"}].each do |range, inserted|
+      chunked.replace(range, inserted)
+      plain.replace(range, inserted)
+      chunked.text.should eq(plain.text)
+      chunked.size.should eq(plain.size)
+      chunked.bytesize.should eq(plain.bytesize)
+    end
+  end
 end
 
 describe "Scribe::Buffer literal search" do

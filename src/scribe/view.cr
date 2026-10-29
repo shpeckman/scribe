@@ -3,6 +3,9 @@ module Scribe
   class View
     alias Box = {Int32, Int32, Int32, Int32}
 
+    record PasteSession, ranges : Array(Range(Int32, Int32)), revision : Int32,
+      carets : Array(Caret), primary : Int32, index : Int32
+
     getter document : Document
     getter buffer   : Buffer
     getter carets   : Array(Caret)
@@ -14,18 +17,22 @@ module Scribe
     property? dragging       : Bool
     property? copy_on_select : Bool
 
-    @graphemes : Graphemes
-    @folds     : Folds?
+    @graphemes     : Graphemes
+    @folds         : Folds?
+    @paste_session : PasteSession?
+    @paste_pending : Bool
 
     def initialize(@document : Document, *, layout : Layout? = nil, @copy_on_select : Bool = false)
-      @buffer    = @document.buffer
-      @graphemes = @document.graphemes
-      @carets    = [Caret.at(@buffer.size)]
-      @primary   = 0
-      @box       = nil
-      @dragging  = false
-      @folds     = nil
-      @layout    = layout || LineLayout.new(@buffer)
+      @buffer        = @document.buffer
+      @graphemes     = @document.graphemes
+      @carets        = [Caret.at(@buffer.size)]
+      @primary       = 0
+      @box           = nil
+      @dragging      = false
+      @folds         = nil
+      @paste_session = nil
+      @paste_pending = false
+      @layout        = layout || LineLayout.new(@buffer)
       @document.attach(self)
     end
 
@@ -34,10 +41,12 @@ module Scribe
     end
 
     protected def rebind(buffer : Buffer) : Nil
-      @buffer = buffer
-      @layout = LineLayout.new(buffer, @folds) if @layout.is_a?(LineLayout)
-      @carets  = [Caret.at(0)]
-      @primary = 0
+      @buffer        = buffer
+      @layout        = LineLayout.new(buffer, @folds) if @layout.is_a?(LineLayout)
+      @carets        = [Caret.at(0)]
+      @primary       = 0
+      @paste_session = nil
+      @paste_pending = false
     end
 
     def length : Int32
@@ -107,6 +116,7 @@ module Scribe
     def run(command : Command, selecting : Bool = false) : Bool
       return false if @document.read_only? && command.edits?
 
+      @paste_session = nil unless command.paste_previous?
       @macros.try(&.push(command))
 
       case command
@@ -128,6 +138,10 @@ module Scribe
       in .select_all?             then select_all
       in .select_word?            then select_word
       in .select_line?            then select_line
+      in .select_inside_brackets? then return select_brackets(false)
+      in .select_around_brackets? then return select_brackets(true)
+      in .select_inside_quotes?   then return select_quotes(false)
+      in .select_around_quotes?   then return select_quotes(true)
       in .collapse?               then return collapse
       in .add_next_occurrence?    then return add_next_occurrence
       in .skip_occurrence?        then return skip_occurrence
@@ -156,6 +170,7 @@ module Scribe
       in .move_lines_up?          then return move_lines(-1)
       in .move_lines_down?        then return move_lines(1)
       in .duplicate_lines?        then return duplicate_lines
+      in .duplicate_selection?    then return duplicate_selection
       in .delete_lines?           then return delete_lines
       in .sort_lines?             then return sort_lines
       in .reverse_lines?          then return reverse_lines
@@ -168,6 +183,7 @@ module Scribe
       in .copy?                   then copy
       in .cut?                    then cut
       in .paste?                  then paste_clipboard
+      in .paste_previous?         then return paste_previous
       in .undo?                   then return undo
       in .redo?                   then return redo
       end

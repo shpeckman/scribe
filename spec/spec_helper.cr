@@ -53,6 +53,39 @@ class Deferred
   end
 end
 
+class DeferredHistory
+  include Scribe::Clipboard
+  include Scribe::ClipboardHistory
+
+  getter entries  : Array(String)
+  getter pending  : Array({Int32, Proc(String?, Nil)})
+
+  def initialize(@entries : Array(String))
+    @pending = [] of {Int32, Proc(String?, Nil)}
+  end
+
+  def size : Int32
+    @entries.size
+  end
+
+  def write(text : String) : Nil
+    @entries.unshift(text)
+  end
+
+  def read(&block : String? -> Nil) : Nil
+    read(0, &block)
+  end
+
+  def read(index : Int32, &block : String? -> Nil) : Nil
+    @pending << {index, block}
+  end
+
+  def deliver : Nil
+    @pending.each { |(index, block)| block.call(@entries[index]?) }
+    @pending.clear
+  end
+end
+
 class Recorder
   include Scribe::Listener
 

@@ -10,20 +10,22 @@ module Scribe
     getter? regex          : Bool
     getter error           : String?
 
-    @pattern  : Regex?
-    @buffer   : Buffer?
-    @revision : Int32
-    @found    : Array(Range(Int32, Int32))
-    @lines    : Array(Array(Range(Int32, Int32))?)
+    @pattern    : Regex?
+    @buffer     : Buffer?
+    @revision   : Int32
+    @found      : Array(Range(Int32, Int32))
+    @lines      : Array(Array(Range(Int32, Int32))?)
+    @line_local : Bool
 
     def initialize(@query : String = "", *, @case_sensitive : Bool = false,
                    @whole_word : Bool = false, @regex : Bool = false)
-      @pattern  = nil
-      @error    = nil
-      @buffer   = nil
-      @revision = -1
-      @found    = NO_RANGES
-      @lines    = [] of Array(Range(Int32, Int32))?
+      @pattern    = nil
+      @error      = nil
+      @buffer     = nil
+      @revision   = -1
+      @found      = NO_RANGES
+      @lines      = [] of Array(Range(Int32, Int32))?
+      @line_local = false
       compile
     end
 
@@ -58,7 +60,7 @@ module Scribe
     end
 
     def lined? : Bool
-      !@regex && !@query.includes?('\n')
+      @regex ? @line_local : !@query.includes?('\n')
     end
 
     def matches(buffer : Buffer) : Array(Range(Int32, Int32))
@@ -108,11 +110,12 @@ module Scribe
     end
 
     private def compile : Nil
-      @buffer  = nil
-      @found   = NO_RANGES
-      @lines   = [] of Array(Range(Int32, Int32))?
-      @error   = nil
-      @pattern = nil
+      @buffer     = nil
+      @found      = NO_RANGES
+      @lines      = [] of Array(Range(Int32, Int32))?
+      @error      = nil
+      @pattern    = nil
+      @line_local = false
       return if @query.empty?
 
       source  = @regex ? @query : Regex.escape(@query)
@@ -120,8 +123,61 @@ module Scribe
       options = Regex::CompileOptions::MULTILINE_ONLY
       options |= Regex::CompileOptions::IGNORE_CASE unless @case_sensitive
       @pattern = Regex.new(source, options)
+      @line_local = @regex && local_source?(source)
     rescue error : ArgumentError
       @error = error.message
+    end
+
+    private def local_source?(source : String) : Bool
+      index = 0
+      while index < source.bytesize
+        byte = source.byte_at(index)
+        return false if byte == 0x0a || byte == 0x0d
+
+        case byte
+        when '\\'.ord
+          index += 1
+          return false if index >= source.bytesize || !local_escape?(source.byte_at(index))
+        when '['.ord
+          index = local_class(source, index + 1) || return false
+          next
+        when '('.ord
+          if source_byte(source, index + 1) == '?'.ord
+            marker = source_byte(source, index + 2)
+            return false if marker && "aiJmsUx-".includes?(marker.chr)
+          end
+        end
+        index += 1
+      end
+      true
+    end
+
+    private def source_byte(source : String, index : Int32) : UInt8?
+      index < source.bytesize ? source.byte_at(index) : nil
+    end
+
+    private def local_class(source : String, index : Int32) : Int32?
+      return nil if source_byte(source, index) == '^'.ord
+
+      while index < source.bytesize
+        byte = source.byte_at(index)
+        return nil if byte == 0x0a || byte == 0x0d || byte == '['.ord
+        return index + 1 if byte == ']'.ord
+
+        if byte == '\\'.ord
+          index += 1
+          return nil if index >= source.bytesize || !local_escape?(source.byte_at(index))
+        end
+        index += 1
+      end
+      nil
+    end
+
+    private def local_escape?(byte : UInt8) : Bool
+      char = byte.chr
+      return false if "nrsWDRNXCpPxuUov0".includes?(char)
+
+      !char.alphanumeric? || "AbBzZGKEQghkSVwdtfea123456789".includes?(char)
     end
 
     private def scan_lines(buffer : Buffer, pattern : Regex, journal : Array(Buffer::Entry)?) : Array(Range(Int32, Int32))

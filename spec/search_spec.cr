@@ -1,6 +1,21 @@
 # spec/search_spec.cr
 require "./spec_helper"
 
+class Scribe::Search
+  getter line_scans : Int32 = 0
+  getter text_scans : Int32 = 0
+
+  private def scan_line(line : Line, pattern : Regex) : Array(Range(Int32, Int32))
+    @line_scans += 1
+    previous_def
+  end
+
+  private def scan_text(buffer : Buffer, pattern : Regex) : Array(Range(Int32, Int32))
+    @text_scans += 1
+    previous_def
+  end
+end
+
 describe Scribe::Search do
   it "finds literal matches case-insensitively by default" do
     text   = buffer("Foo foo\nfOO bar")
@@ -79,5 +94,46 @@ describe Scribe::Search do
     search.matches(text).size.should eq(1)
     (Scribe::Buffer::JOURNAL + 5).times { text.replace(0...0, "a") }
     search.matches(text).size.should eq(text.size)
+  end
+
+  it "rescans only touched lines for provably line-local regexes" do
+    text   = buffer("a1\nb2\nc3")
+    search = Scribe::Search.new("[a-z]\\d", regex: true)
+    search.matches(text).should eq([0...2, 3...5, 6...8])
+    search.line_scans.should eq(3)
+    search.text_scans.should eq(0)
+
+    text.replace(4...4, "x\nz")
+    search.matches(text).should eq(Scribe::Search.new("[a-z]\\d", regex: true).matches(text))
+    search.line_scans.should eq(5)
+    text.replace(0...2, "A9")
+    search.matches(text).should eq(Scribe::Search.new("[a-z]\\d", regex: true).matches(text))
+    search.line_scans.should eq(6)
+  end
+
+  it "keeps potentially multiline regexes on the whole-text path" do
+    ["b\\sa", "[^x]", "(?s).*", "\\x0a"].each do |query|
+      text   = buffer("ab\nab")
+      search = Scribe::Search.new(query, regex: true)
+      search.matches(text)
+      search.text_scans.should eq(1)
+      search.line_scans.should eq(0)
+      text.replace(0...0, "x")
+      search.matches(text).should eq(Scribe::Search.new(query, regex: true).matches(text))
+      search.text_scans.should eq(2)
+    end
+  end
+
+  it "matches fresh searches after edits and journal overflow" do
+    ["^a", "a.*b", "a*", "(\\w+)=(\\d)"].each do |query|
+      text   = buffer("ab\na=1\nzz")
+      search = Scribe::Search.new(query, regex: true)
+      search.matches(text)
+      text.replace(2...2, "c\nb")
+      text.replace(0...1, "")
+      search.matches(text).should eq(Scribe::Search.new(query, regex: true).matches(text))
+      (Scribe::Buffer::JOURNAL + 5).times { text.replace(0...0, "a") }
+      search.matches(text).should eq(Scribe::Search.new(query, regex: true).matches(text))
+    end
   end
 end

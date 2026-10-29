@@ -184,7 +184,7 @@ module Scribe
       ending = @line_ending.sequence.to_slice
       last   = @buffer.line_count - 1
       @buffer.line_count.times do |index|
-        yield @buffer.line(index).to_slice
+        @buffer.line(index).each_chunk { |chunk, _start| yield chunk }
         yield ending if index < last
       end
       yield ending if final_break?

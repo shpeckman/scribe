@@ -162,26 +162,28 @@ Text inserted exactly at a mark goes after a `Left` mark and before a `Right` ma
 | Group | Commands |
 | --- | --- |
 | Motion | `Left`, `Right`, `WordLeft`, `WordRight`, `SubwordLeft`, `SubwordRight`, `RowStart`, `SmartRowStart`, `RowEnd`, `Up`, `Down`, `PageUp`, `PageDown`, `DocumentStart`, `DocumentEnd` |
-| Selection | `SelectAll`, `SelectWord`, `SelectLine`, `Collapse` |
+| Selection | `SelectAll`, `SelectWord`, `SelectLine`, `SelectInsideBrackets`, `SelectAroundBrackets`, `SelectInsideQuotes`, `SelectAroundQuotes`, `Collapse` |
 | Carets | `AddNextOccurrence`, `SkipOccurrence`, `SelectAllOccurrences`, `AddCaretAbove`, `AddCaretBelow`, `AddCaretPerLine`, `RemoveLastCaret` |
 | Box | `BoxUp`, `BoxDown`, `BoxLeft`, `BoxRight` |
 | Deleting | `DeleteBackward`, `DeleteForward`, `DeleteWordBackward`, `DeleteWordForward`, `DeleteSubwordBackward`, `DeleteSubwordForward`, `DeleteToRowStart`, `DeleteToRowEnd` |
-| Editing | `NewLine`, `Tab`, `Indent`, `Outdent`, `ToggleComment` |
+| Editing | `NewLine`, `Tab`, `Indent`, `Outdent`, `ToggleComment`, `DuplicateSelection` |
 | Lines | `MoveLinesUp`, `MoveLinesDown`, `DuplicateLines`, `DeleteLines`, `SortLines`, `ReverseLines`, `UniqueLines`, `JoinLines`, `TrimTrailingWhitespace` |
 | Case | `UpperCase`, `LowerCase`, `TitleCase` |
-| Clipboard | `Copy`, `Cut`, `Paste` |
+| Clipboard | `Copy`, `Cut`, `Paste`, `PastePrevious` |
 | History | `Undo`, `Redo` |
 
 `run` returns `true` when the command applied and `false` when it did not, so a host can let the key go on to something else:
 
 - Always `true`: motion, `SelectAll`, `SelectWord`, `SelectLine`, `AddCaretAbove`, `AddCaretBelow`, the `Box` commands, the `Delete` commands, `Tab`, `Copy`, `Cut` and `Paste` — even when there was nothing to delete or copy.
-- `false` when there was nothing to do: `Collapse` and `RemoveLastCaret` with one caret; `AddNextOccurrence`, `SkipOccurrence` and `SelectAllOccurrences` without a match; `NewLine`, `Indent`, `Outdent`, `ToggleComment` and the `Lines` commands when the text did not change; `Undo` and `Redo` with an empty stack.
+- `false` when there was nothing to do: `Collapse` and `RemoveLastCaret` with one caret; the bracket and quote selection commands with no target; `AddNextOccurrence`, `SkipOccurrence` and `SelectAllOccurrences` without a match; `DuplicateSelection` with no selections; `PastePrevious` without an active paste or older entry; `NewLine`, `Indent`, `Outdent`, `ToggleComment` and the `Lines` commands when the text did not change; `Undo` and `Redo` with an empty stack.
 - `false` for every command that edits while the document is read-only.
 
 Notes on individual commands:
 
 - `Up`, `Down`, `PageUp` and `PageDown` remember the column a caret started in, so moving through a short line and on to a long one returns to that column. Any other move or edit forgets it.
 - `SmartRowStart` goes to the first non-blank cluster of the row, or to the row start when already there.
+- `SelectInsideBrackets` and `SelectAroundBrackets` select the innermost balanced pair around every caret, excluding or including its delimiters. The quote equivalents pair unescaped single or double quotes on one line.
+- `DuplicateSelection` inserts a copy immediately after every nonempty selection and selects the copies, preserving their direction. Empty carets stay unchanged.
 - `Tab` indents every line when a selection spans lines, and inserts the indent otherwise. `Outdent` removes one indent, a leading tab, or up to that many spaces.
 - `ToggleComment` comments every non-blank line under the carets at their shallowest indentation, or uncomments them when all are commented. It needs the `comment` option.
 - `MoveLines*`, `Indent`, `Outdent`, `ToggleComment`, `DuplicateLines` and `DeleteLines` act once per block of lines under the carets.
@@ -190,6 +192,7 @@ Notes on individual commands:
 - `SortLines`, `ReverseLines`, `UniqueLines` and `TrimTrailingWhitespace` act on the whole block of lines under the carets and return `false` when nothing changed. `JoinLines` joins the block, or the next line when a caret is empty.
 - `UpperCase`, `LowerCase` and `TitleCase` transform each selection and keep it selected; without a selection they do nothing.
 - `AddCaretPerLine` puts a caret at the end of every line a selection spans.
+- `PastePrevious` replaces the immediately preceding paste with the next older clipboard entry; repeated calls keep cycling. Moving, editing or starting another paste ends that session.
 - `Box*` grows a rectangular selection from the primary caret. `start_box(row, column)`, `select_box(anchor_row, anchor_column, head_row, head_column)` and `clear_box` let a host drive it from a pointer; `box` returns the current corners.
 
 Typing is not a command: send `insert(text)`. Pressing Enter in a single-line field is not a command either; the host decides what it means.
@@ -207,6 +210,7 @@ The host plugs into a document through these modules. Each is small, and all but
 | `Graphemes` | `boundaries(text)`, optional `boundaries(bytes)`, `kind(cluster : Bytes)`, `width(cluster : Bytes)` | byte boundaries fall back to a string copy |
 | `Filter` | `filter(text)` | `SingleLine`, `MultiLine(tab)` |
 | `Clipboard` | `write(text)`, `read { \|text\| }` | `Register` (in memory) |
+| `ClipboardHistory` | `size`, `read(index) { \|text\| }` | `Register` (100 entries) |
 | `Layout` | `row_count`, `row_of`, `row_start`, `row_end`, `cell_of`, `offset_in`, `page_rows` | `LineLayout` (one row per line) |
 | `Listener` | `applied`, `edited`, `moved`, `decorated` | no-ops to override |
 | `TokenSource` | `tokens(buffer, line)` | none |
@@ -216,7 +220,7 @@ The host plugs into a document through these modules. Each is small, and all but
 
 **Filters.** `SingleLine` turns line breaks and tabs into spaces and drops other control characters. `MultiLine.new(tab)` keeps line breaks and replaces tabs with `tab`. Any struct or class that includes `Filter` works, for example one that only lets digits through.
 
-**Clipboard.** `read` takes a block so a clipboard can answer later, for example after asking a terminal; the paste happens when the block is called.
+**Clipboard.** `read` takes a block so a clipboard can answer later, for example after asking a terminal; the paste happens when the block is called. `Register` also includes `ClipboardHistory`, keeping the newest 100 unique entries and exposing them through `entries`; `Register.new(limit: n)` changes that bound. Other clipboards can opt into `PastePrevious` by including `ClipboardHistory`.
 
 **Layout.** `cell_of(offset)` returns a `Cell` (`column`, `row`) in display columns, and `offset_in(row, column)` goes back. A host that wraps lines implements `Layout` over its wrapped rows and assigns it with `document.layout = …`; vertical motion, paging (`page_rows`), smart Home, carets above and below and box selection then follow the wrapped rows.
 
@@ -233,7 +237,7 @@ The host plugs into a document through these modules. Each is small, and all but
 
 ## Buffer and changes
 
-`document.buffer` stores each line as UTF-8 bytes with its cluster boundaries, and keeps line offsets in a `Scribe::Index`: lines in blocks, with a Fenwick tree over the block sums. String-backed lines retain their string; mapped lines retain the mapping and materialize `text` only on demand. Finding a line, its start, or the line of an offset is logarithmic in the number of blocks plus a scan inside one, and inserting or removing a line costs the same instead of rebuilding the whole index. On a million-line document, 200 edits that each add a line take about 76 ms rather than 1.3 s. A line whose bytes are all ASCII keeps no boundary table at all — its columns are its byte offsets — so ordinary source code costs nothing per cluster; `line.ascii?` says which kind a line is. Searching is line by line and never builds the whole text.
+`document.buffer` stores each line as UTF-8 bytes with its cluster boundaries, and keeps line offsets in a `Scribe::Index`: lines in blocks, with a Fenwick tree over the block sums. String-backed lines retain their string; mapped lines retain the mapping and materialize `text` only on demand. Finding a line, its start, or the line of an offset is logarithmic in the number of blocks plus a scan inside one, and inserting or removing a line costs the same instead of rebuilding the whole index. On a million-line document, 200 edits that each add a line take about 76 ms rather than 1.3 s. A line whose bytes are all ASCII keeps no boundary table at all — its columns are its byte offsets — so ordinary source code costs nothing per cluster; `line.ascii?` says which kind a line is. Lines over 64 KiB use immutable, cluster-aligned pieces; `line.chunked?` reports this. Ordinary ASCII splices share unchanged pieces without flattening the line. Host-defined Unicode segmentation can still require a full-line boundary rebuild. Searching is line by line and never builds the whole text.
 
 ```crystal
 buffer = text.buffer
@@ -241,7 +245,7 @@ buffer.line_count
 buffer.position(42)          # Scribe::Position(line, column)
 buffer.offset(position)
 buffer.line_start(3)
-buffer.line(3)               # Scribe::Line: text, to_slice, mapped?, size, ascii?, cluster(column), bytes(column), boundary(column), slice(from, to), each_cluster
+buffer.line(3)               # Scribe::Line: text, to_slice, mapped?, chunked?, size, ascii?, cluster(column), bytes(column), boundary(column), slice(from, to), each_cluster, each_chunk
 buffer.width(3, 0, 10)       # display width of columns 0...10 on line 3
 buffer.index(3, 12)          # the column under display column 12 on line 3
 buffer.find("needle", 10)    # next literal match as a cluster range, wrapping around
@@ -260,9 +264,10 @@ buffer.line_byte(3)          # the byte offset where line 3 starts
 buffer.byte_position(97)     # Scribe::Position(line, byte within the line)
 buffer.byte_text(10, 20)     # the text between two byte offsets
 buffer.chunk(97)             # the rest of that line as Bytes, "\n" at a line end, empty at the end
+buffer.each_chunk(97) { |bytes| consume(bytes) } # contiguous pieces without flattening
 ```
 
-`chunk` reads the text without copying it, one line at a time, for parsers that pull their input.
+`chunk` returns the rest of the line and can flatten a chunked line. `each_chunk` yields the same text as contiguous pieces instead, including `"\n"` at a line end. `Line#text` and `Line#to_slice` also flatten on demand.
 
 **Units and points.** Other tools count positions in other units. `Scribe::Units` is `Bytes`, `Utf16`, `CodePoints` or `Clusters`, and a `Point` is a line and a column in one of them:
 
@@ -362,7 +367,7 @@ The carets, marks, decorations and annotations outside the changed lines stay wh
 
 ## Opening and saving a file
 
-`Document.open` keeps a read-only mapping of the file and finds the lines in its bytes. Unchanged lines stay in the mapping with no per-line string; an edit copies only the lines it touches into ordinary editable storage. The caret starts at the beginning, and `path` remembers the file.
+`Document.open` keeps a read-only mapping of the file and finds the lines in its bytes. Unchanged lines and long-line pieces stay in the mapping with no per-line string; edits create ordinary string-backed pieces only for changed storage. The caret starts at the beginning, and `path` remembers the file.
 
 ```crystal
 text = Scribe::Document.open(graphemes, "src/app.cr", filter: Scribe::MultiLine.new)
@@ -407,7 +412,7 @@ text.map(range, mark)         # a range, which does not grow at its edges
 
 ## Find and replace
 
-`Search` finds matches in a buffer, case-insensitively by default, with optional whole-word and regular-expression modes. Matches are cluster ranges, cached until the buffer changes. A literal search keeps its matches per line and, after an edit, rescans only the lines the edit touched; a regular expression can span lines, so it rescans the whole text.
+`Search` finds matches in a buffer, case-insensitively by default, with optional whole-word and regular-expression modes. Matches are cluster ranges, cached until the buffer changes. Literal searches and regular expressions proved unable to consume a line break keep matches per line and, after an edit, rescan only the lines the edit touched. Multiline-capable or uncertain regular expressions retain the whole-text rescan.
 
 ```crystal
 search = Scribe::Search.new("(\\w+)=(\\d)", regex: true)

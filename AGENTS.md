@@ -10,10 +10,10 @@ Orientation for AI agents working on this repository.
 
 - `src/scribe.cr` — requires every file in load order.
 - `src/scribe/values.cr` — the small value types: `Position`, `Point`, `Cell`, `Edit`, `Stroke`, `Gravity`, `LineEnding`, and `Units` (bytes, UTF-16, code points, clusters).
-- `src/scribe/line.cr` — `Line`: one line of UTF-8 bytes plus, only when it needs one, its cluster byte boundaries and a lazily materialized `String`. An all-ASCII line stores no boundaries and maps column to byte with the identity; everything goes through `boundary`, `byte_at` and `column_at`, never a raw marks array. A mapped line also retains its `Mapped` owner, so its bytes stay valid while the line is referenced.
+- `src/scribe/line.cr` — `Line`: one line of UTF-8 bytes plus, only when it needs one, its cluster byte boundaries and a lazily materialized `String`. Short lines keep one slice; lines over `CHUNK` use immutable cluster-aligned pieces with `Index` prefix lookups. An all-ASCII line stores no boundaries and maps column to byte with the identity; everything goes through `boundary`, `byte_at` and `column_at`, never a raw marks array. Pieces retain their `String` or `Mapped` owners. `text` and `to_slice` flatten on demand; `each_chunk` avoids it.
 - `src/scribe/index.cr` — `Index`: the line-offset structure. Weights live in blocks of at most `LIMIT`, with two Fenwick trees over the blocks (one of line counts, one of weight sums), so `prefix`, `locate`, `set`, `insert` and `drop` are logarithmic in the block count plus a scan inside one block. Only a block split or an emptied block rebuilds the trees. `spec/index_spec.cr` holds a differential test against a naive array over 3000 random edits; extend it rather than reasoning about the structure by hand.
 - `src/scribe/mapped.cr` — `Mapped`: a POSIX `mmap` of a file, private/read-only by default or shared/read-write with `writable: true`, with `bytes`, `sequential` and an idempotent `close`. `Buffer.map` and `Document.open` retain the read-only mapping; `Document#save` uses a block-scoped writable mapping.
-- `src/scribe/buffer.cr` — `Buffer`: the lines, their optional persistent mapping, and two `Index`es over them, one in clusters and one in bytes (each weight is the line's size plus its separator); cluster-aligned per-line copy-on-write `replace`, line-by-line literal `find` over bytes, byte and unit mapping (`byte_offset`, `offset_at_byte`, `byte_text`, `chunk`, `point`, `offset_at`), a journal of touched lines carrying each `Change`, and `changes_since`.
+- `src/scribe/buffer.cr` — `Buffer`: the lines, their optional persistent mapping, and two `Index`es over them, one in clusters and one in bytes (each weight is the line's size plus its separator); cluster-aligned piece-splicing `replace`, line-by-line literal `find` over bytes, byte and unit mapping (`byte_offset`, `offset_at_byte`, `byte_text`, `chunk`, `each_chunk`, `point`, `offset_at`), a journal of touched lines carrying each `Change`, and `changes_since`.
 - `src/scribe/caret.cr`, `change.cr`, `mark.cr` — caret ranges with an optional goal column, one reversible replacement (with its start and end points in any unit), and offsets that follow changes.
 - `src/scribe/decoration.cr`, `annotation.cr` — `Decoration` (a kind and message over a range held by two marks) and `Annotation` (text beside the document at one offset, with a `Placement`). `Document#decorate` and `#annotate` replace them per source.
 - `src/scribe/folds.cr` — `Folds`: collapsible line ranges held by marks, owned by a `View`; `LineLayout` consults them so motion skips hidden lines.
@@ -21,23 +21,23 @@ Orientation for AI agents working on this repository.
 - `src/scribe/diff.cr` — `Diff.hunks` (a Myers line diff with common ends trimmed and a fallback past `limit`) and `Scribe.diff`, which turns two texts into `Edit`s in the old text's cluster offsets.
 - `src/scribe/macro_log.cr` — `MacroLog`: records the commands and text a view receives and replays them; a replay records nothing itself.
 - `src/scribe/history.cr` — undo and redo steps, typing and deleting grouped within a time window, a save point, and an injectable clock.
-- `src/scribe/search.cr` — regex and literal search; literal searches are kept per line and updated from the buffer's journal.
+- `src/scribe/search.cr` — regex and literal search; literals and regexes conservatively proved line-local are kept per line and updated from the buffer's journal. Multiline-capable or uncertain regexes rescan the whole text.
 - `src/scribe/token.cr`, `token_source.cr` — the `Token` value (start, count, kind; columns count clusters), and the two interfaces that carry it: `TokenSource` (`tokens(buffer, line)`, for a document) and `Tokenizer` (`tokens(text)`, for standalone text). Neither has an implementation here.
 - `src/scribe/recall.cr` — input history for single-line fields.
 - `src/scribe/command.cr` — the `Command` enum and `edits?`.
 - `src/scribe/document.cr` — `Document`: the text, options, path, line endings, history, marks, decorations, annotations, transactions, revision mapping (`map`), atomic writable-mmap `save`, and the edit planner views go through (`apply`, `replace_ranges`, `record`, `changed`). It holds a lazily built primary `View` and delegates the whole caret and editing API to it.
-- `src/scribe/view.cr` — `View`: carets, primary index, box, layout, folds, the macro log, `run` dispatch, `seat` (which places carets and tells listeners) and `follow` (which carries this view's carets through a change another view made).
+- `src/scribe/view.cr` — `View`: carets, primary index, box, layout, folds, the macro log, paste-cycle state, `run` dispatch, `seat` (which places carets and tells listeners) and `follow` (which carries this view's carets through a change another view made).
 - `src/scribe/view/` — the rest of `View`, split by concern by reopening the class:
   - `carets.cr` — motion, goal column, selection, occurrences, box.
-  - `editing.cr` — `insert`, `paste`, `insert_snippet`, auto-closing, deleting, new line, tab.
+  - `editing.cr` — `insert`, `paste`, paste cycling, duplicate selection, `insert_snippet`, auto-closing, deleting, new line, tab.
   - `lines.cr` — indent, outdent, comments, moving, duplicating and deleting lines.
   - `transforms.cr` — sort, reverse, unique, join, trim, case, surround, carets per line and per match, subword edges.
   - `clipboard.cr` — copy, cut, paste, auto-copy.
-  - `finder.cr` — find, replace, bracket matching.
+  - `finder.cr` — find, replace, bracket matching, bracket and quote text objects.
 - Interfaces the host implements, each with its defaults:
   - `graphemes.cr` — `Graphemes` and `ClusterKind`; string boundaries are abstract, and byte boundaries default to one temporary string copy.
   - `filter.cr` — `Filter`, `SingleLine`, `MultiLine`.
-  - `clipboard.cr` — `Clipboard`, `Register`.
+  - `clipboard.cr` — `Clipboard`, optional `ClipboardHistory`, and the bounded in-memory `Register`.
   - `layout.cr` — `Layout`, `LineLayout`.
   - `listener.cr` — `Listener` with no-op hooks.
   - `token_source.cr` — `TokenSource` and `Tokenizer`; implemented outside this shard, by `TreeSitter::Syntax` and `TreeSitter::Tokenizer`.
@@ -52,10 +52,10 @@ Orientation for AI agents working on this repository.
 ## Rules
 
 - Offsets count grapheme clusters, and a line break counts as one. Text inside the buffer always uses `\n`; other endings live only in `Document#line_ending`, `export` and `save`.
-- `Graphemes#boundaries` returns cluster start offsets plus the byte size; clusters reach `kind` and `width` as byte slices into the line, so never allocate a `String` per cluster on a hot path. Buffer read paths use `Line#to_slice`; call `Line#text` only when a `String` is genuinely required.
-- Both `Index`es change together in `replace_lines`; any new per-line weight goes through an `Index` rather than a new copy of the tree code. `Buffer` never touches a Fenwick array directly.
-- `@lines` is still a flat `Array(Line)`, so an edit that changes the line count memmoves it. That is what remains of the per-edit cost at a million lines (about 0.4 ms), and blocking it is the next step if that matters. A single very long line is also still one byte sequence with one boundary table, so an edit inside a 50 MB line is linear in the line; intra-line chunking is not done.
-- Mapped lines and their `Bytes` are read-only and retain the mapping owner. Edits create ordinary string-backed replacement lines; never mutate mapped storage or close the persistent mapping explicitly.
+- `Graphemes#boundaries` returns cluster start offsets plus the byte size; clusters reach `kind` and `width` as byte slices into the line, so never allocate a `String` per cluster on a hot path. Buffer read paths use `Line#each_chunk`; `Line#to_slice` is for contiguous compatibility and `Line#text` only when a `String` is genuinely required.
+- Both buffer `Index`es change together in `replace_lines`; piece prefix lookups and any new per-line weight also go through an `Index` rather than a new copy of the tree code. `Buffer` never touches a Fenwick array directly.
+- `@lines` is still a flat `Array(Line)`, so an edit that changes the line count memmoves it. Long lines use shared pieces, and ordinary ASCII splices avoid rebuilding or flattening the line. Arbitrary host grapheme rules can still force a full-line boundary rebuild; never assume bounded Unicode resynchronization.
+- Mapped lines and their `Bytes` are read-only and retain the mapping owner. Edits create ordinary string-backed pieces and can share unchanged mapped pieces; never mutate mapped storage or close the persistent mapping explicitly. `mapped?` is true only for wholly mapping-backed, unedited lines.
 - `Document#save` writes a same-directory temporary file through a shared writable mapping, closes it, then renames it. Never truncate or overwrite the file a live buffer is reading; update `path` and the save point only after a successful rename.
 - Positions for other tools go through `Units`, `Buffer#point`/`offset_at` and `Change#start_point`/`old_end_point`/`new_end_point`; never count bytes or UTF-16 units by hand elsewhere.
 - `Buffer#replace` widens a change to whole clusters when an edit merges with a neighbour. Never assume `inserted_size` equals the cluster count of the text passed in; place carets from the returned `Change`.

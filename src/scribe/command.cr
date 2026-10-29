@@ -19,6 +19,10 @@ module Scribe
     SelectAll
     SelectWord
     SelectLine
+    SelectInsideBrackets
+    SelectAroundBrackets
+    SelectInsideQuotes
+    SelectAroundQuotes
     Collapse
     AddNextOccurrence
     SkipOccurrence
@@ -47,6 +51,7 @@ module Scribe
     MoveLinesUp
     MoveLinesDown
     DuplicateLines
+    DuplicateSelection
     DeleteLines
     SortLines
     ReverseLines
@@ -59,14 +64,15 @@ module Scribe
     Copy
     Cut
     Paste
+    PastePrevious
     Undo
     Redo
 
     def edits? : Bool
       in?(DeleteBackward, DeleteForward, DeleteWordBackward, DeleteWordForward, DeleteSubwordBackward,
         DeleteSubwordForward, DeleteToRowStart, DeleteToRowEnd, NewLine, Tab, Indent, Outdent, ToggleComment,
-        MoveLinesUp, MoveLinesDown, DuplicateLines, DeleteLines, SortLines, ReverseLines, UniqueLines,
-        JoinLines, TrimTrailingWhitespace, UpperCase, LowerCase, TitleCase, Cut, Paste, Undo, Redo)
+        MoveLinesUp, MoveLinesDown, DuplicateLines, DuplicateSelection, DeleteLines, SortLines, ReverseLines, UniqueLines,
+        JoinLines, TrimTrailingWhitespace, UpperCase, LowerCase, TitleCase, Cut, Paste, PastePrevious, Undo, Redo)
     end
   end
 end
