@@ -363,7 +363,7 @@ describe Scribe::Document do
       text = document("ab cd ef")
       text.place_carets([Scribe::Caret.new(2, 0), Scribe::Caret.new(6, 8)])
       text.run(Scribe::Command::DuplicateSelection)
-      text.value.should eq("ab ab cdefef")
+      text.value.should eq("abab cd efef")
       text.carets.should eq([Scribe::Caret.new(4, 2), Scribe::Caret.new(10, 12)])
       document("ab").run(Scribe::Command::DuplicateSelection).should be_false
     end
