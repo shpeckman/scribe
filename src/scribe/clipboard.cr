@@ -32,7 +32,9 @@ module Scribe
       @text = text
       @entries.delete(text)
       @entries.unshift(text)
-      @entries.pop while @entries.size > @limit
+      while @entries.size > @limit
+        @entries.pop
+      end
     end
 
     def read(&block : String? -> Nil) : Nil
