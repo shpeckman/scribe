@@ -32,7 +32,7 @@ Orientation for AI agents working on this repository.
   - `editing.cr` — `insert`, `paste`, paste cycling, duplicate selection, `insert_snippet`, auto-closing, deleting, new line, tab.
   - `lines.cr` — indent, outdent, comments, moving, duplicating and deleting lines.
   - `transforms.cr` — sort, reverse, unique, join, trim, case, surround, carets per line and per match, subword edges.
-  - `clipboard.cr` — copy, cut, paste, auto-copy.
+  - `clipboard.cr` — copy, cut, paste, auto-copy (into `selection_clipboard` when set, else `clipboard`).
   - `finder.cr` — find, replace, bracket matching, bracket and quote text objects.
 - Interfaces the host implements, each with its defaults:
   - `graphemes.cr` — `Graphemes` and `ClusterKind`; string boundaries are abstract, and byte boundaries default to one temporary string copy.

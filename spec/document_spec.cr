@@ -508,6 +508,18 @@ describe Scribe::Document do
       board.text.should eq("hello world")
     end
 
+    it "copies a selection as it is made into the selection clipboard and leaves the clipboard alone" do
+      board     = Scribe::Register.new
+      selection = Scribe::Register.new
+      text      = document("hello world", clipboard: board, selection_clipboard: selection, copy_on_select: true)
+      text.move(6)
+      text.move(11, selecting: true)
+      selection.text.should eq("world")
+      board.text.should eq("")
+      text.run(Scribe::Command::Copy)
+      board.text.should eq("world")
+    end
+
     it "cycles the immediately preceding paste through clipboard history" do
       board = Scribe::Register.new
       board.write("one")

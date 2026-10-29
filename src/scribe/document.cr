@@ -13,6 +13,7 @@ module Scribe
 
     property filter       : Filter
     property clipboard    : Clipboard
+    property selection_clipboard : Clipboard?
     property line_ending  : LineEnding
     property indent       : String
     property comment      : String?
@@ -61,6 +62,7 @@ module Scribe
     def initialize(@graphemes : Graphemes, text : String = "", *,
                    @filter         : Filter    = SingleLine.new,
                    @clipboard      : Clipboard = Register.new,
+                   @selection_clipboard : Clipboard? = nil,
                    layout          : Layout?   = nil,
                    @max_length     : Int32?    = nil,
                    @indent         : String    = "  ",
