@@ -542,7 +542,7 @@ describe Scribe::Document do
     end
 
     it "validates deferred history reads before replacing a paste" do
-      board = DeferredHistory.new(["old", "new"])
+      board = DeferredHistory.new(["new", "old"])
       text  = document("", clipboard: board)
       text.run(Scribe::Command::Paste)
       board.deliver
