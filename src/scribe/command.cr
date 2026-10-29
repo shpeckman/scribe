@@ -70,7 +70,7 @@ module Scribe
     def edits? : Bool
       in?(DeleteBackward, DeleteForward, DeleteWordBackward, DeleteWordForward, DeleteSubwordBackward,
         DeleteSubwordForward, DeleteToRowStart, DeleteToRowEnd, NewLine, Tab, Indent, Outdent, ToggleComment,
-        MoveLinesUp, MoveLinesDown, DuplicateLines, DeleteLines, SortLines, ReverseLines, UniqueLines,
+        MoveLinesUp, MoveLinesDown, DuplicateLines, DuplicateSelection, DeleteLines, SortLines, ReverseLines, UniqueLines,
         JoinLines, TrimTrailingWhitespace, UpperCase, LowerCase, TitleCase, Cut, Paste, Undo, Redo)
     end
   end
