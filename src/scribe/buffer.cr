@@ -200,7 +200,7 @@ module Scribe
       @text ||= String.build do |io|
         @lines.each_with_index do |line, index|
           io << BREAK if index > 0
-          io.write(line.to_slice)
+          line.each_chunk { |piece, _start| io.write(piece) }
         end
       end
     end
@@ -217,14 +217,14 @@ module Scribe
       String.build do |io|
         row   = @lines[first.line]
         start = row.byte_at(first.column)
-        io.write(row.to_slice[start, row.bytesize - start])
+        row.each_chunk(start, row.bytesize) { |piece, _at| io.write(piece) }
         (first.line + 1...last.line).each do |index|
           io << BREAK
-          io.write(@lines[index].to_slice)
+          @lines[index].each_chunk { |piece, _at| io.write(piece) }
         end
         row = @lines[last.line]
         io << BREAK
-        io.write(row.to_slice[0, row.byte_at(last.column)])
+        row.each_chunk(0, row.byte_at(last.column)) { |piece, _at| io.write(piece) }
       end
     end
 
