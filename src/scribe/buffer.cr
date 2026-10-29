@@ -346,7 +346,7 @@ module Scribe
       byte  = row.byte_at(from)
       limit = row.bytesize - needle.bytesize
       while byte <= limit
-        head = byte_index(row.to_slice, needle.to_slice, byte) || return nil
+        head = byte_index(row, needle.to_slice, byte) || return nil
         return nil if head > limit
 
         start = row.column_at(head)
@@ -354,6 +354,39 @@ module Scribe
         return {start, stop - start} if row.boundary(start) == head && row.boundary(stop) == head + needle.bytesize
 
         byte = head + 1
+      end
+      nil
+    end
+
+    private def byte_index(row : Line, needle : Bytes, from : Int32) : Int32?
+      return byte_index(row.to_slice, needle, from) unless row.chunked?
+
+      table = Array(Int32).new(needle.size, 0)
+      length = 0
+      index = 1
+      while index < needle.size
+        if needle[index] == needle[length]
+          length += 1
+          table[index] = length
+          index += 1
+        elsif length > 0
+          length = table[length - 1]
+        else
+          index += 1
+        end
+      end
+
+      matched = 0
+      row.each_chunk(from, row.bytesize) do |piece, start|
+        piece.each_with_index do |byte, at|
+          while matched > 0 && byte != needle[matched]
+            matched = table[matched - 1]
+          end
+          matched += 1 if byte == needle[matched]
+          if matched == needle.size
+            return start + at - needle.size + 1
+          end
+        end
       end
       nil
     end
@@ -376,7 +409,9 @@ module Scribe
       return nil if part.bytesize > row.bytesize
 
       head = row.bytesize - part.bytesize
-      return nil unless row.to_slice[head, part.bytesize] == part.to_slice
+      part.to_slice.each_with_index do |byte, index|
+        return nil unless row.byte(head + index) == byte
+      end
 
       start = row.column_at(head)
       return nil unless row.boundary(start) == head && start >= from
@@ -393,7 +428,10 @@ module Scribe
     end
 
     private def spans?(parts : Array(String), row : Int32) : Bool
-      (1...parts.size - 1).all? { |index| @lines[row + index].to_slice == parts[index].to_slice }
+      (1...parts.size - 1).all? do |index|
+        line = @lines[row + index]
+        line.bytesize == parts[index].bytesize && line.starts_with?(parts[index])
+      end
     end
 
     def journal_since(revision : Int32) : Array(Entry)?
