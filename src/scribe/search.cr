@@ -60,7 +60,7 @@ module Scribe
     end
 
     def lined? : Bool
-      !@regex && !@query.includes?('\n')
+      @regex ? @line_local : !@query.includes?('\n')
     end
 
     def matches(buffer : Buffer) : Array(Range(Int32, Int32))
