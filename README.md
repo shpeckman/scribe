@@ -237,7 +237,7 @@ The host plugs into a document through these modules. Each is small, and all but
 
 ## Buffer and changes
 
-`document.buffer` stores each line as UTF-8 bytes with its cluster boundaries, and keeps line offsets in a `Scribe::Index`: lines in blocks, with a Fenwick tree over the block sums. String-backed lines retain their string; mapped lines retain the mapping and materialize `text` only on demand. Finding a line, its start, or the line of an offset is logarithmic in the number of blocks plus a scan inside one, and inserting or removing a line costs the same instead of rebuilding the whole index. On a million-line document, 200 edits that each add a line take about 76 ms rather than 1.3 s. A line whose bytes are all ASCII keeps no boundary table at all — its columns are its byte offsets — so ordinary source code costs nothing per cluster; `line.ascii?` says which kind a line is. Searching is line by line and never builds the whole text.
+`document.buffer` stores each line as UTF-8 bytes with its cluster boundaries, and keeps line offsets in a `Scribe::Index`: lines in blocks, with a Fenwick tree over the block sums. String-backed lines retain their string; mapped lines retain the mapping and materialize `text` only on demand. Finding a line, its start, or the line of an offset is logarithmic in the number of blocks plus a scan inside one, and inserting or removing a line costs the same instead of rebuilding the whole index. On a million-line document, 200 edits that each add a line take about 76 ms rather than 1.3 s. A line whose bytes are all ASCII keeps no boundary table at all — its columns are its byte offsets — so ordinary source code costs nothing per cluster; `line.ascii?` says which kind a line is. Lines over 64 KiB use immutable, cluster-aligned pieces; `line.chunked?` reports this. Ordinary ASCII splices share unchanged pieces without flattening the line. Host-defined Unicode segmentation can still require a full-line boundary rebuild. Searching is line by line and never builds the whole text.
 
 ```crystal
 buffer = text.buffer
@@ -245,7 +245,7 @@ buffer.line_count
 buffer.position(42)          # Scribe::Position(line, column)
 buffer.offset(position)
 buffer.line_start(3)
-buffer.line(3)               # Scribe::Line: text, to_slice, mapped?, size, ascii?, cluster(column), bytes(column), boundary(column), slice(from, to), each_cluster
+buffer.line(3)               # Scribe::Line: text, to_slice, mapped?, chunked?, size, ascii?, cluster(column), bytes(column), boundary(column), slice(from, to), each_cluster, each_chunk
 buffer.width(3, 0, 10)       # display width of columns 0...10 on line 3
 buffer.index(3, 12)          # the column under display column 12 on line 3
 buffer.find("needle", 10)    # next literal match as a cluster range, wrapping around
@@ -264,9 +264,10 @@ buffer.line_byte(3)          # the byte offset where line 3 starts
 buffer.byte_position(97)     # Scribe::Position(line, byte within the line)
 buffer.byte_text(10, 20)     # the text between two byte offsets
 buffer.chunk(97)             # the rest of that line as Bytes, "\n" at a line end, empty at the end
+buffer.each_chunk(97) { |bytes| consume(bytes) } # contiguous pieces without flattening
 ```
 
-`chunk` reads the text without copying it, one line at a time, for parsers that pull their input.
+`chunk` returns the rest of the line and can flatten a chunked line. `each_chunk` yields the same text as contiguous pieces instead, including `"\n"` at a line end. `Line#text` and `Line#to_slice` also flatten on demand.
 
 **Units and points.** Other tools count positions in other units. `Scribe::Units` is `Bytes`, `Utf16`, `CodePoints` or `Clusters`, and a `Point` is a line and a column in one of them:
 
