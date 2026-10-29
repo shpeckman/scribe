@@ -116,6 +116,7 @@ module Scribe
     def run(command : Command, selecting : Bool = false) : Bool
       return false if @document.read_only? && command.edits?
 
+      @paste_session = nil unless command.paste_previous?
       @macros.try(&.push(command))
 
       case command
