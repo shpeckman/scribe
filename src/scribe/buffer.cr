@@ -404,15 +404,22 @@ module Scribe
 
       head_byte = first.byte_at(head.column)
       tail_byte = last.byte_at(tail.column)
-      combined  = String.build(head_byte + text.bytesize + last.bytesize - tail_byte) do |io|
-        io.write(first.to_slice[0, head_byte])
-        io << text
-        io.write(last.to_slice[tail_byte, last.bytesize - tail_byte])
-      end
-      fresh = Buffer.split(combined).map { |part| Line.new(part, @graphemes) }
+      parts     = Buffer.split(text)
+      fresh     = if parts.size == 1
+                    [Line.splice(first, head_byte, last, tail_byte, text, @graphemes)]
+                  else
+                    lines = [Line.splice(first, head_byte, first, first.bytesize, parts.first, @graphemes)]
+                    parts[1...-1].each { |part| lines << Line.new(part, @graphemes) }
+                    lines << Line.splice(last, 0, last, tail_byte, parts.last, @graphemes)
+                  end
 
-      lead  = common_lead(first, fresh.first, head_byte)
-      trail = common_trail(last, fresh.last, tail_byte, lead, head.line == tail.line, fresh.size == 1)
+      if first.ascii? && last.ascii? && text.ascii_only?
+        lead  = head.column
+        trail = last.size - tail.column
+      else
+        lead  = common_lead(first, fresh.first, head_byte)
+        trail = common_trail(last, fresh.last, tail_byte, lead, head.line == tail.line, fresh.size == 1)
+      end
 
       old_total = (head.line..tail.line).sum { |index| @lines[index].size } + (tail.line - head.line)
       new_total = fresh.sum(&.size) + (fresh.size - 1)

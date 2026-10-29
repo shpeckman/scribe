@@ -55,8 +55,8 @@ module Scribe
     def self.detect_in(buffer : Buffer) : LineEnding
       return LineEnding::LF if buffer.line_count < 2
 
-      first = buffer.line(0).to_slice
-      !first.empty? && first.last == 0x0d ? LineEnding::CRLF : LineEnding::LF
+      first = buffer.line(0)
+      first.byte(first.bytesize - 1) == 0x0d ? LineEnding::CRLF : LineEnding::LF
     end
 
     def self.normalize(text : String) : String
