@@ -247,18 +247,21 @@ module Scribe
       head = byte_position(from)
       tail = byte_position(to)
       if head.line == tail.line
-        return String.new(@lines[head.line].to_slice[head.column, tail.column - head.column])
+        row = @lines[head.line]
+        return String.build(tail.column - head.column) do |io|
+          row.each_chunk(head.column, tail.column) { |piece, _start| io.write(piece) }
+        end
       end
 
       String.build do |io|
         first = @lines[head.line]
-        io.write(first.to_slice[head.column, first.bytesize - head.column])
+        first.each_chunk(head.column, first.bytesize) { |piece, _start| io.write(piece) }
         (head.line + 1...tail.line).each do |index|
           io << BREAK
-          io.write(@lines[index].to_slice)
+          @lines[index].each_chunk { |piece, _start| io.write(piece) }
         end
         io << BREAK
-        io.write(@lines[tail.line].to_slice[0, tail.column])
+        @lines[tail.line].each_chunk(0, tail.column) { |piece, _start| io.write(piece) }
       end
     end
 
@@ -270,6 +273,18 @@ module Scribe
       return BREAK.to_slice if found.column >= row.bytesize
 
       row.to_slice[found.column, row.bytesize - found.column]
+    end
+
+    def each_chunk(byte : Int32, & : Bytes -> Nil) : Nil
+      return unless 0 <= byte < @bytesize
+
+      found = byte_position(byte)
+      row   = @lines[found.line]
+      if found.column >= row.bytesize
+        yield BREAK.to_slice
+      else
+        row.each_chunk(found.column, row.bytesize) { |piece, _start| yield piece }
+      end
     end
 
     def find(needle : String, from : Int32 = 0) : Range(Int32, Int32)?
