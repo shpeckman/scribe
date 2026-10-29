@@ -100,6 +100,7 @@ text.redo
 | --- | --- | --- |
 | `filter` | `SingleLine.new` | What happens to incoming text (see Filters) |
 | `clipboard` | `Register.new` | Where copy, cut and paste go |
+| `selection_clipboard` | `nil` | Where `copy_on_select` goes instead of `clipboard`, for example an X11-style primary selection |
 | `layout` | `LineLayout` | How offsets map to rows and columns |
 | `max_length` | `nil` | Limit in clusters, shared across carets |
 | `indent` | `"  "` | Inserted by `Tab` and `Indent`, removed by `Outdent` |
@@ -108,7 +109,7 @@ text.redo
 | `auto_indent` | `false` | `NewLine` keeps the current line's leading whitespace |
 | `auto_close` | `false` | Typing a bracket or quote inserts its pair (see Typing aids) |
 | `copyable` | `true` | `false` disables copy and cut, for example for a masked password |
-| `copy_on_select` | `false` | Copy a selection as soon as it is made |
+| `copy_on_select` | `false` | Copy a selection as soon as it is made, into `selection_clipboard` when set |
 | `read_only` | `false` | Refuse edits from commands, `insert`, `paste`, `replace_match` and `replace_all`; motion, selection and copy still work, and `value=` and `replace_ranges` from code still apply |
 | `final_newline` | `false` | `export` ends the text with one line ending |
 

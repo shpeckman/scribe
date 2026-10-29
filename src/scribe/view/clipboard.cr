@@ -2,14 +2,14 @@
 module Scribe
   class View
     def auto_copy : Nil
-      copy if @copy_on_select && @carets.any? { |caret| !caret.empty? }
+      copy(@document.selection_clipboard || @document.clipboard) if @copy_on_select && @carets.any? { |caret| !caret.empty? }
     end
 
-    private def copy : Nil
+    private def copy(target : Clipboard = @document.clipboard) : Nil
       return unless @document.copyable?
 
       texts = selected_texts
-      @document.clipboard.write(texts.join('\n')) unless texts.empty?
+      target.write(texts.join('\n')) unless texts.empty?
     end
 
     private def cut : Nil
