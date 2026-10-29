@@ -507,6 +507,57 @@ describe Scribe::Document do
       text.run(Scribe::Command::SelectAll)
       board.text.should eq("hello world")
     end
+
+    it "cycles the immediately preceding paste through clipboard history" do
+      board = Scribe::Register.new
+      board.write("one")
+      board.write("two")
+      board.write("three")
+      text = document("", clipboard: board)
+      text.run(Scribe::Command::Paste)
+      text.value.should eq("three")
+      text.run(Scribe::Command::PastePrevious).should be_true
+      text.value.should eq("two")
+      text.run(Scribe::Command::PastePrevious).should be_true
+      text.value.should eq("one")
+      text.run(Scribe::Command::PastePrevious).should be_false
+      text.undo
+      text.value.should eq("two")
+    end
+
+    it "cycles multi-caret pastes and rejects an invalidated session" do
+      board = Scribe::Register.new
+      board.write("x\ny")
+      board.write("a\nb")
+      text = lines("\n", clipboard: board)
+      text.place_carets([Scribe::Caret.at(0), Scribe::Caret.at(1)])
+      text.run(Scribe::Command::Paste)
+      text.value.should eq("a\nb")
+      text.run(Scribe::Command::PastePrevious)
+      text.value.should eq("x\ny")
+      text.insert("!")
+      text.run(Scribe::Command::PastePrevious).should be_false
+      text.read_only = true
+      text.run(Scribe::Command::PastePrevious).should be_false
+    end
+
+    it "validates deferred history reads before replacing a paste" do
+      board = DeferredHistory.new(["old", "new"])
+      text  = document("", clipboard: board)
+      text.run(Scribe::Command::Paste)
+      board.deliver
+      text.value.should eq("new")
+      text.run(Scribe::Command::PastePrevious).should be_true
+      board.deliver
+      text.value.should eq("old")
+      board.entries.unshift("latest")
+      text.run(Scribe::Command::Paste)
+      board.deliver
+      text.run(Scribe::Command::PastePrevious)
+      text.insert("!")
+      board.deliver
+      text.value.should eq("latest!")
+    end
   end
 
   describe "lines" do
