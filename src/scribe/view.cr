@@ -183,6 +183,7 @@ module Scribe
       in .copy?                   then copy
       in .cut?                    then cut
       in .paste?                  then paste_clipboard
+      in .paste_previous?         then return paste_previous
       in .undo?                   then return undo
       in .redo?                   then return redo
       end
