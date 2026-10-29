@@ -412,7 +412,7 @@ text.map(range, mark)         # a range, which does not grow at its edges
 
 ## Find and replace
 
-`Search` finds matches in a buffer, case-insensitively by default, with optional whole-word and regular-expression modes. Matches are cluster ranges, cached until the buffer changes. A literal search keeps its matches per line and, after an edit, rescans only the lines the edit touched; a regular expression can span lines, so it rescans the whole text.
+`Search` finds matches in a buffer, case-insensitively by default, with optional whole-word and regular-expression modes. Matches are cluster ranges, cached until the buffer changes. Literal searches and regular expressions proved unable to consume a line break keep matches per line and, after an edit, rescan only the lines the edit touched. Multiline-capable or uncertain regular expressions retain the whole-text rescan.
 
 ```crystal
 search = Scribe::Search.new("(\\w+)=(\\d)", regex: true)
