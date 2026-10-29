@@ -164,6 +164,23 @@ describe "Scribe::Document.open" do
     text.length.should eq(body.size)
     text.buffer.position(text.buffer.line_start(500)).line.should eq(500)
   end
+
+  it "chunks long mapped lines and saves edited pieces" do
+    body = "a" * (Scribe::Line::CHUNK * 2) + "bc\ntail"
+    path = written("long-line.txt", body)
+    text = Scribe::Document.open(GRAPHEMES, path, filter: Scribe::MultiLine.new)
+    text.buffer.line(0).chunked?.should be_true
+    text.buffer.line(0).mapped?.should be_true
+
+    text.move(10)
+    text.insert("X")
+    text.buffer.line(0).mapped?.should be_false
+    text.buffer.line(1).mapped?.should be_true
+    expected = body[0, 10] + "X" + body[10..]
+    text.export.should eq(expected)
+    text.save
+    File.read(path).should eq(expected)
+  end
 end
 
 describe "Scribe::Document#save" do
