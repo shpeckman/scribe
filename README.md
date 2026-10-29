@@ -367,7 +367,7 @@ The carets, marks, decorations and annotations outside the changed lines stay wh
 
 ## Opening and saving a file
 
-`Document.open` keeps a read-only mapping of the file and finds the lines in its bytes. Unchanged lines stay in the mapping with no per-line string; an edit copies only the lines it touches into ordinary editable storage. The caret starts at the beginning, and `path` remembers the file.
+`Document.open` keeps a read-only mapping of the file and finds the lines in its bytes. Unchanged lines and long-line pieces stay in the mapping with no per-line string; edits create ordinary string-backed pieces only for changed storage. The caret starts at the beginning, and `path` remembers the file.
 
 ```crystal
 text = Scribe::Document.open(graphemes, "src/app.cr", filter: Scribe::MultiLine.new)
