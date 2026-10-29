@@ -142,8 +142,8 @@ module Scribe
           index = local_class(source, index + 1) || return false
           next
         when '('.ord
-          if source.byte_at(index + 1)? == '?'.ord
-            marker = source.byte_at(index + 2)?
+          if source_byte(source, index + 1) == '?'.ord
+            marker = source_byte(source, index + 2)
             return false if marker && "aiJmsUx-".includes?(marker.chr)
           end
         end
@@ -152,8 +152,12 @@ module Scribe
       true
     end
 
+    private def source_byte(source : String, index : Int32) : UInt8?
+      index < source.bytesize ? source.byte_at(index) : nil
+    end
+
     private def local_class(source : String, index : Int32) : Int32?
-      return nil if source.byte_at(index)? == '^'.ord
+      return nil if source_byte(source, index) == '^'.ord
 
       while index < source.bytesize
         byte = source.byte_at(index)
