@@ -1,6 +1,21 @@
 # spec/search_spec.cr
 require "./spec_helper"
 
+class Scribe::Search
+  getter line_scans : Int32 = 0
+  getter text_scans : Int32 = 0
+
+  private def scan_line(line : Line, pattern : Regex) : Array(Range(Int32, Int32))
+    @line_scans += 1
+    previous_def
+  end
+
+  private def scan_text(buffer : Buffer, pattern : Regex) : Array(Range(Int32, Int32))
+    @text_scans += 1
+    previous_def
+  end
+end
+
 describe Scribe::Search do
   it "finds literal matches case-insensitively by default" do
     text   = buffer("Foo foo\nfOO bar")
