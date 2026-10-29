@@ -5,6 +5,7 @@ module Scribe
     CLOSING = {")", "]", "}", "\"", "'"}
 
     def insert(text : String) : Bool
+      @paste_session = nil
       @macros.try(&.push(text))
       prepared = @document.prepare(text)
       if @document.auto_close? && (PAIRS.has_key?(prepared) || CLOSING.includes?(prepared))
@@ -27,12 +28,72 @@ module Scribe
     end
 
     def paste(text : String) : Bool
+      @paste_session = nil
       normal = LineEnding.normalize(text)
       parts  = normal.chomp.split('\n')
-      return put(@document.filter.filter(normal)) unless multiple? && parts.size == @carets.size
+      ranges = @carets.map(&.range)
+      size   = @buffer.size
 
-      pieces = parts.map { |part| @document.filter.filter(part) }
-      @document.apply(self, History::Kind::Other) { |caret, index| Stroke.new(caret.range, pieces[index]) }
+      if multiple? && parts.size == @carets.size
+        pieces = parts.map { |part| @document.filter.filter(part) }
+        applied = @document.apply(self, History::Kind::Other) { |caret, index| Stroke.new(caret.range, pieces[index]) }
+      else
+        prepared = @document.filter.filter(normal)
+        pieces   = Array.new(@carets.size, prepared)
+        applied  = put(prepared)
+      end
+      remember_paste(ranges, size, pieces, 0) if applied
+      applied
+    end
+
+    private def paste_previous : Bool
+      session = @paste_session || return false
+      history = @document.clipboard.as?(ClipboardHistory) || return false
+      return false if @paste_pending || session.revision != @buffer.revision
+      return false unless session.carets == @carets && session.primary == @primary
+
+      index = session.index + 1
+      return false if index >= history.size
+
+      @paste_pending = true
+      history.read(index) do |text|
+        @paste_pending = false
+        cycle_paste(session, text, index) if text
+        nil
+      end
+      true
+    end
+
+    private def cycle_paste(session : PasteSession, text : String, index : Int32) : Nil
+      return unless @paste_session == session && session.revision == @buffer.revision
+      return unless session.carets == @carets && session.primary == @primary
+      return if @document.read_only?
+
+      normal = LineEnding.normalize(text)
+      parts  = normal.chomp.split('\n')
+      pieces = multiple? && parts.size == @carets.size ? parts.map { |part| @document.filter.filter(part) } : Array.new(@carets.size, @document.filter.filter(normal))
+      size   = @buffer.size
+      if @document.apply(self, History::Kind::Other) { |_caret, at| Stroke.new(session.ranges[at], pieces[at]) }
+        remember_paste(session.ranges, size, pieces, index)
+      end
+    end
+
+    private def remember_paste(ranges : Array(Range(Int32, Int32)), size : Int32,
+                               pieces : Array(String), index : Int32) : Nil
+      @paste_session = nil
+      return unless @carets.size == ranges.size
+
+      delta = 0
+      fresh = ranges.map_with_index do |range, at|
+        start = range.begin + delta
+        stop  = @carets[at].head
+        delta += stop - start - range.size
+        start...stop
+      end
+      return unless @buffer.size - size == delta
+      return unless fresh.each_with_index.all? { |range, at| @buffer.slice_text(range) == pieces[at] }
+
+      @paste_session = PasteSession.new(fresh, @buffer.revision, @carets.dup, @primary, index)
     end
 
     private def duplicate_selection : Bool

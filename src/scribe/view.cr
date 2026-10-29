@@ -3,6 +3,9 @@ module Scribe
   class View
     alias Box = {Int32, Int32, Int32, Int32}
 
+    record PasteSession, ranges : Array(Range(Int32, Int32)), revision : Int32,
+      carets : Array(Caret), primary : Int32, index : Int32
+
     getter document : Document
     getter buffer   : Buffer
     getter carets   : Array(Caret)

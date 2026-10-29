@@ -64,6 +64,7 @@ module Scribe
     Copy
     Cut
     Paste
+    PastePrevious
     Undo
     Redo
 
