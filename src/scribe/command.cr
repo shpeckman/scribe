@@ -19,6 +19,10 @@ module Scribe
     SelectAll
     SelectWord
     SelectLine
+    SelectInsideBrackets
+    SelectAroundBrackets
+    SelectInsideQuotes
+    SelectAroundQuotes
     Collapse
     AddNextOccurrence
     SkipOccurrence

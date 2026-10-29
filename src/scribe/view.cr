@@ -128,6 +128,10 @@ module Scribe
       in .select_all?             then select_all
       in .select_word?            then select_word
       in .select_line?            then select_line
+      in .select_inside_brackets? then return select_brackets(false)
+      in .select_around_brackets? then return select_brackets(true)
+      in .select_inside_quotes?   then return select_quotes(false)
+      in .select_around_quotes?   then return select_quotes(true)
       in .collapse?               then return collapse
       in .add_next_occurrence?    then return add_next_occurrence
       in .skip_occurrence?        then return skip_occurrence

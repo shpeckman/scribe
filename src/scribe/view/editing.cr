@@ -35,6 +35,20 @@ module Scribe
       @document.apply(self, History::Kind::Other) { |caret, index| Stroke.new(caret.range, pieces[index]) }
     end
 
+    private def duplicate_selection : Bool
+      @document.apply(self, History::Kind::Other) do |caret, _index|
+        next nil if caret.empty?
+
+        size = caret.range.size
+        text = @buffer.slice_text(caret.range)
+        if caret.head >= caret.anchor
+          Stroke.new(caret.stop...caret.stop, text, 0, size)
+        else
+          Stroke.new(caret.stop...caret.stop, text, size, 0)
+        end
+      end
+    end
+
     private def put(prepared : String) : Bool
       return false if prepared.empty?
 
