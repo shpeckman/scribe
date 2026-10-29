@@ -72,7 +72,7 @@ module Scribe
       in?(DeleteBackward, DeleteForward, DeleteWordBackward, DeleteWordForward, DeleteSubwordBackward,
         DeleteSubwordForward, DeleteToRowStart, DeleteToRowEnd, NewLine, Tab, Indent, Outdent, ToggleComment,
         MoveLinesUp, MoveLinesDown, DuplicateLines, DuplicateSelection, DeleteLines, SortLines, ReverseLines, UniqueLines,
-        JoinLines, TrimTrailingWhitespace, UpperCase, LowerCase, TitleCase, Cut, Paste, Undo, Redo)
+        JoinLines, TrimTrailingWhitespace, UpperCase, LowerCase, TitleCase, Cut, Paste, PastePrevious, Undo, Redo)
     end
   end
 end

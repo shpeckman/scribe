@@ -17,18 +17,22 @@ module Scribe
     property? dragging       : Bool
     property? copy_on_select : Bool
 
-    @graphemes : Graphemes
-    @folds     : Folds?
+    @graphemes     : Graphemes
+    @folds         : Folds?
+    @paste_session : PasteSession?
+    @paste_pending : Bool
 
     def initialize(@document : Document, *, layout : Layout? = nil, @copy_on_select : Bool = false)
-      @buffer    = @document.buffer
-      @graphemes = @document.graphemes
-      @carets    = [Caret.at(@buffer.size)]
-      @primary   = 0
-      @box       = nil
-      @dragging  = false
-      @folds     = nil
-      @layout    = layout || LineLayout.new(@buffer)
+      @buffer        = @document.buffer
+      @graphemes     = @document.graphemes
+      @carets        = [Caret.at(@buffer.size)]
+      @primary       = 0
+      @box           = nil
+      @dragging      = false
+      @folds         = nil
+      @paste_session = nil
+      @paste_pending = false
+      @layout        = layout || LineLayout.new(@buffer)
       @document.attach(self)
     end
 
@@ -37,10 +41,12 @@ module Scribe
     end
 
     protected def rebind(buffer : Buffer) : Nil
-      @buffer = buffer
-      @layout = LineLayout.new(buffer, @folds) if @layout.is_a?(LineLayout)
-      @carets  = [Caret.at(0)]
-      @primary = 0
+      @buffer        = buffer
+      @layout        = LineLayout.new(buffer, @folds) if @layout.is_a?(LineLayout)
+      @carets        = [Caret.at(0)]
+      @primary       = 0
+      @paste_session = nil
+      @paste_pending = false
     end
 
     def length : Int32
