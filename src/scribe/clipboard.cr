@@ -19,6 +19,8 @@ module Scribe
     getter text    : String
     getter entries : Array(String)
 
+    @limit : Int32
+
     def initialize(@text : String = "", limit : Int32 = LIMIT)
       @entries = @text.empty? ? [] of String : [@text]
       @limit   = Math.max(limit, 0)
