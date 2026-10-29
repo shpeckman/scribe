@@ -162,26 +162,28 @@ Text inserted exactly at a mark goes after a `Left` mark and before a `Right` ma
 | Group | Commands |
 | --- | --- |
 | Motion | `Left`, `Right`, `WordLeft`, `WordRight`, `SubwordLeft`, `SubwordRight`, `RowStart`, `SmartRowStart`, `RowEnd`, `Up`, `Down`, `PageUp`, `PageDown`, `DocumentStart`, `DocumentEnd` |
-| Selection | `SelectAll`, `SelectWord`, `SelectLine`, `Collapse` |
+| Selection | `SelectAll`, `SelectWord`, `SelectLine`, `SelectInsideBrackets`, `SelectAroundBrackets`, `SelectInsideQuotes`, `SelectAroundQuotes`, `Collapse` |
 | Carets | `AddNextOccurrence`, `SkipOccurrence`, `SelectAllOccurrences`, `AddCaretAbove`, `AddCaretBelow`, `AddCaretPerLine`, `RemoveLastCaret` |
 | Box | `BoxUp`, `BoxDown`, `BoxLeft`, `BoxRight` |
 | Deleting | `DeleteBackward`, `DeleteForward`, `DeleteWordBackward`, `DeleteWordForward`, `DeleteSubwordBackward`, `DeleteSubwordForward`, `DeleteToRowStart`, `DeleteToRowEnd` |
-| Editing | `NewLine`, `Tab`, `Indent`, `Outdent`, `ToggleComment` |
+| Editing | `NewLine`, `Tab`, `Indent`, `Outdent`, `ToggleComment`, `DuplicateSelection` |
 | Lines | `MoveLinesUp`, `MoveLinesDown`, `DuplicateLines`, `DeleteLines`, `SortLines`, `ReverseLines`, `UniqueLines`, `JoinLines`, `TrimTrailingWhitespace` |
 | Case | `UpperCase`, `LowerCase`, `TitleCase` |
-| Clipboard | `Copy`, `Cut`, `Paste` |
+| Clipboard | `Copy`, `Cut`, `Paste`, `PastePrevious` |
 | History | `Undo`, `Redo` |
 
 `run` returns `true` when the command applied and `false` when it did not, so a host can let the key go on to something else:
 
 - Always `true`: motion, `SelectAll`, `SelectWord`, `SelectLine`, `AddCaretAbove`, `AddCaretBelow`, the `Box` commands, the `Delete` commands, `Tab`, `Copy`, `Cut` and `Paste` — even when there was nothing to delete or copy.
-- `false` when there was nothing to do: `Collapse` and `RemoveLastCaret` with one caret; `AddNextOccurrence`, `SkipOccurrence` and `SelectAllOccurrences` without a match; `NewLine`, `Indent`, `Outdent`, `ToggleComment` and the `Lines` commands when the text did not change; `Undo` and `Redo` with an empty stack.
+- `false` when there was nothing to do: `Collapse` and `RemoveLastCaret` with one caret; the bracket and quote selection commands with no target; `AddNextOccurrence`, `SkipOccurrence` and `SelectAllOccurrences` without a match; `DuplicateSelection` with no selections; `PastePrevious` without an active paste or older entry; `NewLine`, `Indent`, `Outdent`, `ToggleComment` and the `Lines` commands when the text did not change; `Undo` and `Redo` with an empty stack.
 - `false` for every command that edits while the document is read-only.
 
 Notes on individual commands:
 
 - `Up`, `Down`, `PageUp` and `PageDown` remember the column a caret started in, so moving through a short line and on to a long one returns to that column. Any other move or edit forgets it.
 - `SmartRowStart` goes to the first non-blank cluster of the row, or to the row start when already there.
+- `SelectInsideBrackets` and `SelectAroundBrackets` select the innermost balanced pair around every caret, excluding or including its delimiters. The quote equivalents pair unescaped single or double quotes on one line.
+- `DuplicateSelection` inserts a copy immediately after every nonempty selection and selects the copies, preserving their direction. Empty carets stay unchanged.
 - `Tab` indents every line when a selection spans lines, and inserts the indent otherwise. `Outdent` removes one indent, a leading tab, or up to that many spaces.
 - `ToggleComment` comments every non-blank line under the carets at their shallowest indentation, or uncomments them when all are commented. It needs the `comment` option.
 - `MoveLines*`, `Indent`, `Outdent`, `ToggleComment`, `DuplicateLines` and `DeleteLines` act once per block of lines under the carets.
@@ -190,6 +192,7 @@ Notes on individual commands:
 - `SortLines`, `ReverseLines`, `UniqueLines` and `TrimTrailingWhitespace` act on the whole block of lines under the carets and return `false` when nothing changed. `JoinLines` joins the block, or the next line when a caret is empty.
 - `UpperCase`, `LowerCase` and `TitleCase` transform each selection and keep it selected; without a selection they do nothing.
 - `AddCaretPerLine` puts a caret at the end of every line a selection spans.
+- `PastePrevious` replaces the immediately preceding paste with the next older clipboard entry; repeated calls keep cycling. Moving, editing or starting another paste ends that session.
 - `Box*` grows a rectangular selection from the primary caret. `start_box(row, column)`, `select_box(anchor_row, anchor_column, head_row, head_column)` and `clear_box` let a host drive it from a pointer; `box` returns the current corners.
 
 Typing is not a command: send `insert(text)`. Pressing Enter in a single-line field is not a command either; the host decides what it means.
