@@ -26,6 +26,7 @@ module Scribe
 
     getter document : Document
     getter folds    : Array(Fold)
+    getter revision : Int32 = 0
 
     def initialize(@document : Document)
       @folds = [] of Fold
@@ -136,6 +137,7 @@ module Scribe
 
     private def notify : Nil
       sort
+      @revision += 1
     end
 
     private def buffer : Buffer

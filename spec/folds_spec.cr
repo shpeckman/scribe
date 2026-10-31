@@ -1,6 +1,16 @@
 # spec/folds_spec.cr
 require "./spec_helper"
 
+# A one-row-per-line layout that records the folds it is handed.
+private class Recording < Scribe::LineLayout
+  getter handed = [] of Scribe::Folds?
+
+  def folds=(folds : Scribe::Folds?) : Scribe::Folds?
+    @handed << folds
+    super
+  end
+end
+
 private def folded(text : String) : {Scribe::Document, Scribe::Folds}
   subject = lines(text)
   {subject, subject.view.folds}
@@ -114,5 +124,29 @@ describe Scribe::Folds do
     other.folds.hidden?(1).should be_false
     other.layout.row_count.should eq(3)
     text.view.layout.row_count.should eq(1)
+  end
+
+  it "hands the folds to a host layout, now and when one is assigned later" do
+    text  = lines("a\nb\nc")
+    early = Recording.new(text.buffer)
+    text.layout = early
+    early.handed.should be_empty
+    folds = text.view.folds
+    early.handed.should eq([folds])
+    late = Recording.new(text.buffer)
+    text.layout = late
+    late.handed.should eq([folds])
+  end
+
+  it "counts its changes in revision" do
+    _, folds = folded("a\nb\nc\nd")
+    folds.revision.should eq(0)
+    folds.fold(0, 2)
+    folds.expand(0)
+    folds.collapse(0)
+    folds.unfold(0)
+    folds.revision.should eq(4)
+    folds.expand(0)
+    folds.revision.should eq(4)
   end
 end

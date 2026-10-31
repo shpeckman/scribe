@@ -2,7 +2,7 @@
 
 A multi-caret text editing model for Crystal.
 
-scribe holds the text, the carets and the undo history, and carries out editing commands: typing, deleting, word and subword motion, multiple carets, box selection, clipboard, line operations and transforms, comments, auto-closing brackets, snippets with tabstops, folding, and find and replace. One document can carry several views, each with its own carets and layout. It draws nothing, reads no input and highlights nothing: syntax tokens come from a host-supplied `TokenSource`, such as the one in [treesitter](https://github.com/shpeckman/treesitter.cr). The host — a terminal UI, a GUI, a test — implements a few small interfaces, sends commands, and listens for changes.
+scribe holds the text, the carets and the undo history, and carries out editing commands: typing, deleting, word and subword motion, multiple carets, box selection, clipboard, line operations and transforms, comments, auto-closing brackets, snippets with tabstops, folding, and find and replace. One document can carry several views, each with its own carets and layout. It draws nothing, reads no input and highlights nothing: syntax tokens come from a host-supplied `TokenSource`, such as the Tree-sitter highlighter in [asekii-editor](https://github.com/shpeckman/asekii-editor). The host — a terminal UI, a GUI, a test — implements a few small interfaces, sends commands, and listens for changes.
 
 It has no dependencies beyond the standard library.
 
@@ -232,9 +232,9 @@ The host plugs into a document through these modules. Each is small, and all but
 - `moved(view)` runs whenever that view's carets change, including after every edit. The view it is given carries `view.document`.
 - `decorated(document)` runs when a source replaces its decorations, and `annotated(document)` when a source replaces its annotations.
 
-**TokenSource.** Anything that can return the tokens of a line in a buffer includes `TokenSource`, so a renderer takes a source without knowing what produced it. `TreeSitter::Syntax` is one. A `Token` is a `start`, a `count` and a `kind`, with columns counting clusters, and `TokenSource::NO_TOKENS` is the shared empty result.
+**TokenSource.** Anything that can return the tokens of a line in a buffer includes `TokenSource`, so a renderer takes a source without knowing what produced it. `Asekii::Syntax::Highlighter` from [asekii-editor](https://github.com/shpeckman/asekii-editor) is one. A `Token` is a `start`, a `count` and a `kind`, with columns counting clusters, and `TokenSource::NO_TOKENS` is the shared empty result.
 
-**Tokenizer.** Anything that can tokenize standalone text, with no document behind it, includes `Tokenizer`: `tokens(text)` returns one array of `Token` per line. This is what a renderer needs for a fenced code block or any other snippet it holds as a string. `TreeSitter::Tokenizer` is one.
+**Tokenizer.** Anything that can tokenize standalone text, with no document behind it, includes `Tokenizer`: `tokens(text)` returns one array of `Token` per line. This is what a renderer needs for a fenced code block or any other snippet it holds as a string. `Asekii::Syntax::Tokenizer` is one.
 
 ## Buffer and changes
 
@@ -335,7 +335,7 @@ folds.replace([{0, 4}, {6, 9}])   # every fold at once, as a query would supply 
 folds.clear
 ```
 
-`LineLayout` consults the view's folds, so `row_count`, vertical motion, paging, smart Home and carets above and below all skip hidden lines. A host with its own `Layout` reads `folds.hidden?` itself. `view.folds` creates the set on first use and `view.folds?` tells whether one exists.
+`LineLayout` consults the view's folds, so `row_count`, vertical motion, paging, smart Home and carets above and below all skip hidden lines. A host with its own `Layout` overrides `Layout#folds=` (a no-op by default) to receive them: the view hands its folds to the layout when they are first made and to every layout assigned later. `folds.revision` counts fold, unfold, collapse and expand calls, so a layout can tell when to recount its rows. `view.folds` creates the set on first use and `view.folds?` tells whether one exists.
 
 ## Snippets
 
@@ -435,15 +435,16 @@ Scribe::Token.new(0, 3, "keyword")   # start, count, kind — columns count clus
 A `TokenSource` serves one line of a buffer and is what a renderer reads through:
 
 ```crystal
-syntax = TreeSitter::Syntax.for(text, "src/app.cr")   # includes Scribe::TokenSource
-syntax.tokens(text.buffer, 3)                          # => Array(Scribe::Token)
+session = Asekii::Syntax::Session.new(text, Asekii::Syntax::Languages["crystal"])
+syntax  = Asekii::Syntax::Highlighter.new(session)   # includes Scribe::TokenSource
+syntax.tokens(text.buffer, 3)                         # => Array(Scribe::Token)
 ```
 
 A `Tokenizer` serves standalone text, one array of tokens per line, for a snippet with no document behind it:
 
 ```crystal
-marker = TreeSitter.language("crystal").tokenizer(graphemes)   # includes Scribe::Tokenizer
-marker.tokens("def f\nend")                                    # => [[Token], [Token]]
+marker = Asekii::Syntax::Tokenizer.new(Asekii::Syntax::Languages["crystal"], graphemes)   # includes Scribe::Tokenizer
+marker.tokens("def f\nend")                                                              # => [[Token], [Token]]
 ```
 
 To examine text outside a document, build a line with `Scribe::Line.new(text, graphemes)`. `text.brackets` returns the offsets of the bracket pair beside an empty primary caret.

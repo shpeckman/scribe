@@ -12,7 +12,7 @@ module Scribe
     getter primary  : Int32
     getter box      : Box?
 
-    property layout          : Layout
+    getter layout            : Layout
     property macros          : MacroLog?
     property? dragging       : Bool
     property? copy_on_select : Bool
@@ -34,6 +34,11 @@ module Scribe
       @paste_pending = false
       @layout        = layout || LineLayout.new(@buffer)
       @document.attach(self)
+    end
+
+    def layout=(value : Layout) : Layout
+      @folds.try { |found| value.folds = found }
+      @layout = value
     end
 
     def close : Nil
@@ -59,7 +64,7 @@ module Scribe
 
       made    = Folds.new(@document)
       @folds  = made
-      @layout.as?(LineLayout).try { |rows| rows.folds = made }
+      @layout.folds = made
       made
     end
 

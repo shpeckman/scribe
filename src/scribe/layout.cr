@@ -8,6 +8,10 @@ module Scribe
     abstract def cell_of(offset : Int32) : Cell
     abstract def offset_in(row : Int32, column : Int32) : Int32
     abstract def page_rows : Int32
+
+    def folds=(folds : Folds?) : Folds?
+      folds
+    end
   end
 
   class LineLayout

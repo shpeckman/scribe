@@ -4,7 +4,7 @@ Orientation for AI agents working on this repository.
 
 ## What this is
 
-`scribe` is a Crystal shard holding a multi-caret text editing model: a grapheme-cluster buffer, views with their own carets, undo history, search, marks, decorations, annotations, folds, snippets and a set of editing commands. It produces no syntax tokens of its own: it defines the `Token` value and the `TokenSource`/`Tokenizer` interfaces, and a host plugs in a producer such as `TreeSitter::Syntax`. It draws nothing and reads no input. Hosts (for example the `tui` shard) plug in through interfaces and drive it with `Scribe::Command` values. It has no dependencies beyond the standard library, and must stay that way.
+`scribe` is a Crystal shard holding a multi-caret text editing model: a grapheme-cluster buffer, views with their own carets, undo history, search, marks, decorations, annotations, folds, snippets and a set of editing commands. It produces no syntax tokens of its own: it defines the `Token` value and the `TokenSource`/`Tokenizer` interfaces, and a host plugs in a producer such as asekii-editor's `Asekii::Syntax::Highlighter`. It draws nothing and reads no input. Hosts (for example the `tui` shard) plug in through interfaces and drive it with `Scribe::Command` values. It has no dependencies beyond the standard library, and must stay that way.
 
 ## Layout
 
@@ -16,7 +16,7 @@ Orientation for AI agents working on this repository.
 - `src/scribe/buffer.cr` — `Buffer`: the lines, their optional persistent mapping, and two `Index`es over them, one in clusters and one in bytes (each weight is the line's size plus its separator); cluster-aligned piece-splicing `replace`, line-by-line literal `find` over bytes, byte and unit mapping (`byte_offset`, `offset_at_byte`, `byte_text`, `chunk`, `each_chunk`, `point`, `offset_at`), a journal of touched lines carrying each `Change`, and `changes_since`.
 - `src/scribe/caret.cr`, `change.cr`, `mark.cr` — caret ranges with an optional goal column, one reversible replacement (with its start and end points in any unit), and offsets that follow changes.
 - `src/scribe/decoration.cr`, `annotation.cr` — `Decoration` (a kind and message over a range held by two marks) and `Annotation` (text beside the document at one offset, with a `Placement`). `Document#decorate` and `#annotate` replace them per source.
-- `src/scribe/folds.cr` — `Folds`: collapsible line ranges held by marks, owned by a `View`; `LineLayout` consults them so motion skips hidden lines.
+- `src/scribe/folds.cr` — `Folds`: collapsible line ranges held by marks, owned by a `View`; `LineLayout` consults them so motion skips hidden lines; `revision` moves on every fold, unfold, collapse and expand.
 - `src/scribe/snippet.cr` — `Snippet`: the LSP snippet parser (`Snippet::Parser`) producing a `Template`, and the live session holding each stop as a pair of marks. Mirrored stops become several carets, so typing fills them together.
 - `src/scribe/diff.cr` — `Diff.hunks` (a Myers line diff with common ends trimmed and a fallback past `limit`) and `Scribe.diff`, which turns two texts into `Edit`s in the old text's cluster offsets.
 - `src/scribe/macro_log.cr` — `MacroLog`: records the commands and text a view receives and replays them; a replay records nothing itself.
@@ -38,9 +38,9 @@ Orientation for AI agents working on this repository.
   - `graphemes.cr` — `Graphemes` and `ClusterKind`; string boundaries are abstract, and byte boundaries default to one temporary string copy.
   - `filter.cr` — `Filter`, `SingleLine`, `MultiLine`.
   - `clipboard.cr` — `Clipboard`, optional `ClipboardHistory`, and the bounded in-memory `Register`.
-  - `layout.cr` — `Layout`, `LineLayout`.
+  - `layout.cr` — `Layout` (with a no-op `folds=` a host layout overrides to receive the view's folds), `LineLayout`.
   - `listener.cr` — `Listener` with no-op hooks.
-  - `token_source.cr` — `TokenSource` and `Tokenizer`; implemented outside this shard, by `TreeSitter::Syntax` and `TreeSitter::Tokenizer`.
+  - `token_source.cr` — `TokenSource` and `Tokenizer`; implemented outside this shard, for example by asekii-editor's `Asekii::Syntax::Highlighter` and `Asekii::Syntax::Tokenizer`.
 - `spec/` — one file per area. `spec/spec_helper.cr` defines a standard-library `Graphemes` (`Plain`), a deferred clipboard, a recording listener, and the `buffer`, `line`, `document`, `lines`, `code` and `change` helpers.
 
 ## Commands
