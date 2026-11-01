@@ -72,6 +72,23 @@ module Scribe
       @folds
     end
 
+    def lift_carets : Bool
+      found = @folds || return false
+      moved = false
+      list  = @carets.map do |caret|
+        line = @buffer.position(caret.head).line
+        next caret unless found.hidden?(line)
+
+        moved = true
+        while line > 0 && found.hidden?(line)
+          line -= 1
+        end
+        Caret.at(@buffer.line_end(line))
+      end
+      place_carets(list, @primary) if moved
+      moved
+    end
+
     def primary_caret : Caret
       @carets[@primary]
     end

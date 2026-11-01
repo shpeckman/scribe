@@ -30,6 +30,18 @@ describe Scribe::Folds do
     folds.rows.should eq([0, 1, 4])
   end
 
+  it "lifts carets out of collapsed lines to the end of the line above" do
+    text, folds = folded("a\nbb\nc\nd")
+    view = text.view
+    view.lift_carets.should be_false
+    view.place_carets([Scribe::Caret.at(3), Scribe::Caret.at(7)], 0)
+    folds.fold(1, 2)
+    view.lift_carets.should be_false
+    folds.fold(0, 2)
+    view.lift_carets.should be_true
+    view.carets.map(&.head).should eq([1, 7])
+  end
+
   it "refuses an empty or out-of-range fold and keeps one fold per header" do
     text, folds = folded("a\nb\nc")
     folds.fold(1, 1).should be_nil
