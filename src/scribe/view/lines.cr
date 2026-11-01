@@ -35,24 +35,24 @@ module Scribe
     private def toggle_comment : Bool
       prefix  = @document.comment || return false
       lines   = blocks.flat_map { |(first, last)| (first..last).to_a }
-      targets = lines.reject { |line| blank?(@buffer.line(line)) }
+      targets = lines.reject { |line| @buffer.blank?(line) }
       return false if targets.empty?
 
       size      = count(prefix)
-      commented = targets.all? { |line| @buffer.line(line).starts_with?(prefix, leading(@buffer.line(line))) }
+      commented = targets.all? { |line| @buffer.line(line).starts_with?(prefix, @buffer.leading(line)) }
 
       edits =
         if commented
           targets.map do |line|
             row    = @buffer.line(line)
-            column = leading(row)
+            column = @buffer.leading(line)
             span   = size
             span  += 1 if column + size < row.size && row.char(column + size) == ' '
             start  = @buffer.line_start(line) + column
             Edit.new(start...(start + span), "")
           end
         else
-          column = targets.min_of { |line| leading(@buffer.line(line)) }
+          column = targets.min_of { |line| @buffer.leading(line) }
           targets.map do |line|
             start = @buffer.line_start(line) + column
             Edit.new(start...start, prefix + " ")
@@ -144,18 +144,6 @@ module Scribe
         return offset + delta if start <= offset <= stop
       end
       offset
-    end
-
-    private def leading(line : Line) : Int32
-      column = 0
-      while column < line.size && @graphemes.kind(line.bytes(column)).space?
-        column += 1
-      end
-      column
-    end
-
-    private def blank?(line : Line) : Bool
-      leading(line) == line.size
     end
   end
 end

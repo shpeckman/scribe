@@ -2,6 +2,19 @@
 require "./spec_helper"
 
 describe Scribe::Buffer do
+  it "measures leading whitespace and blank lines" do
+    text = buffer("    four\n  \n\nzero\n\t tab")
+    text.leading(0).should eq(4)
+    text.indentation(0).should eq(4)
+    text.blank?(0).should be_false
+    text.leading(1).should eq(2)
+    text.blank?(1).should be_true
+    text.indentation(1).should be_nil
+    text.blank?(2).should be_true
+    text.indentation(3).should eq(0)
+    text.leading(4).should eq(2)
+  end
+
   it "splits its text into lines and maps offsets to positions" do
     text = buffer("ab\ncde\n")
     text.size.should eq(7)

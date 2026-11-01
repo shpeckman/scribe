@@ -249,6 +249,9 @@ buffer.line_start(3)
 buffer.line(3)               # Scribe::Line: text, to_slice, mapped?, chunked?, size, ascii?, cluster(column), bytes(column), boundary(column), slice(from, to), each_cluster, each_chunk
 buffer.width(3, 0, 10)       # display width of columns 0...10 on line 3
 buffer.index(3, 12)          # the column under display column 12 on line 3
+buffer.leading(3)            # how many whitespace clusters line 3 starts with
+buffer.blank?(3)             # whether line 3 is empty or only whitespace
+buffer.indentation(3)        # display width of line 3's leading whitespace, nil for a blank line (indent guides, hanging wraps)
 buffer.find("needle", 10)    # next literal match as a cluster range, wrapping around
 buffer.find_all("needle")
 buffer.revision              # how many edits the buffer has seen
@@ -333,6 +336,7 @@ folds.unfold(2)
 folds.rows                   # the visible lines, in order
 folds.replace([{0, 4}, {6, 9}])   # every fold at once, as a query would supply them
 folds.clear
+text.view.lift_carets        # moves carets on hidden lines to the end of the visible line above; false when none was hidden
 ```
 
 `LineLayout` consults the view's folds, so `row_count`, vertical motion, paging, smart Home and carets above and below all skip hidden lines. A host with its own `Layout` overrides `Layout#folds=` (a no-op by default) to receive them: the view hands its folds to the layout when they are first made and to every layout assigned later. `folds.revision` counts fold, unfold, collapse and expand calls, so a layout can tell when to recount its rows. `view.folds` creates the set on first use and `view.folds?` tells whether one exists.

@@ -182,6 +182,24 @@ module Scribe
       total
     end
 
+    def leading(line : Int32) : Int32
+      row    = @lines[line]
+      column = 0
+      while column < row.size && @graphemes.kind(row.bytes(column)).space?
+        column += 1
+      end
+      column
+    end
+
+    def blank?(line : Int32) : Bool
+      leading(line) == @lines[line].size
+    end
+
+    def indentation(line : Int32) : Int32?
+      column = leading(line)
+      column == @lines[line].size ? nil : width(line, 0, column)
+    end
+
     def index(line : Int32, width : Int32, from : Int32 = 0, to : Int32 = Int32::MAX) : Int32
       row    = @lines[line]
       stop   = to.clamp(0, row.size)
